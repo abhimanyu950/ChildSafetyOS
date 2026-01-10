@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1096942346174",
+    "project_id": "childsafetyos",
+    "storage_bucket": "childsafetyos.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1096942346174:android:2f02d917e9926de690e3ef",
+        "android_client_info": {
+          "package_name": "com.childsafety.os"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCQ-Kd5_MjSLUK7aE43y_78aS70wXJX3gQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
