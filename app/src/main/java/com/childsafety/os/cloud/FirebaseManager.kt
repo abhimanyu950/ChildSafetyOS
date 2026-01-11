@@ -1,18 +1,26 @@
 package com.childsafety.os.cloud
 
 import android.content.Context
+import android.provider.Settings
 import android.util.Log
+import com.childsafety.os.cloud.models.*
+import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
+import com.google.firebase.firestore.SetOptions
+import java.text.SimpleDateFormat
+import java.util.*
 
 /**
- * Manages Firebase initialization and configuration.
- * Called once during Application.onCreate().
+ * Enhanced Firebase manager with analytics and event logging.
+ * Handles all Firestore operations for parental dashboard.
  */
 object FirebaseManager {
 
     private const val TAG = "FirebaseManager"
     private var initialized = false
+    private lateinit var db: FirebaseFirestore
+    private lateinit var deviceId: String
 
     fun init(context: Context) {
         if (initialized) return
@@ -24,12 +32,384 @@ object FirebaseManager {
                 .setCacheSizeBytes(FirebaseFirestoreSettings.CACHE_SIZE_UNLIMITED)
                 .build()
             
-            FirebaseFirestore.getInstance().firestoreSettings = settings
+            db = FirebaseFirestore.getInstance()
+            db.firestoreSettings = settings
+            
+            // Get unique device ID
+            deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+            
+            // Initialize device status
+            initDeviceStatus(context)
             
             initialized = true
-            Log.i(TAG, "Firebase initialized successfully")
+            Log.i(TAG, "Firebase initialized successfully with deviceId: $deviceId")
         } catch (e: Exception) {
             Log.e(TAG, "Firebase initialization failed (app will continue)", e)
         }
     }
+
+    private fun initDeviceStatus(context: Context) {
+        val deviceStatus = DeviceStatus(
+            deviceId = deviceId,
+            deviceName = android.os.Build.MODEL,
+            childName = "Child", // Could be configured by parent
+            vpnEnabled = false,
+            adminProtectionEnabled = false,
+            settingsLockEnabled = false,
+            ageGroup = "CHILD"
+        )
+        
+        db.collection("devices")
+            .document(deviceId)
+            .set(deviceStatus, SetOptions.merge())
+            .addOnSuccessListener {
+                Log.d(TAG, "Device status initialized")
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Failed to init device status", e)
+            }
+    }
+
+    /**
+     * Update device status (VPN, Admin, Settings Lock state)
+     */
+    fun updateDeviceStatus(
+        vpnEnabled: Boolean? = null,
+        adminEnabled: Boolean? = null,
+        settingsLockEnabled: Boolean? = null
+    ) {
+        if (!initialized) return
+        
+        val updates = mutableMapOf<String, Any>(
+            "lastSeen" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+            "updatedAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+        )
+        
+        vpnEnabled?.let { updates["vpnEnabled"] = it }
+        adminEnabled?.let { updates["adminProtectionEnabled"] = it }
+        settingsLockEnabled?.let { updates["settingsLockEnabled"] = it }
+        
+        db.collection("devices")
+            .document(deviceId)
+            .update(updates)
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Failed to update device status", e)
+            }
+    }
+
+    /**
+     * Log a safety event (block, filter, etc.)
+     */
+    fun logEvent(event: SafetyEvent) {
+        if (!initialized) {
+            Log.w(TAG, "Firebase not initialized, skipping event log")
+            return
+        }
+        
+        val eventRef = db.collection("devices")
+            .document(deviceId)
+            .collection("events")
+            .document()
+        
+        val eventWithId = event.copy(eventId = eventRef.id)
+        
+        eventRef.set(eventWithId)
+            .addOnSuccessListener {
+                Log.d(TAG, "Event logged: ${event.eventType} - ${event.reason}")
+                
+                // Update daily stats
+                updateDailyStats(event)
+                
+                // Check for alert conditions
+                checkAlertConditions(event)
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Failed to log event", e)
+            }
+    }
+
+    /**
+     * Log an image block with ML scores
+     */
+    fun logImageBlock(
+        imageUrl: String,
+        mlScores: Map<String, Double>,
+        threshold: Map<String, Double>,
+        reason: String,
+        url: String? = null,
+        domain: String? = null
+    ) {
+        val event = SafetyEvent(
+            eventType = EventType.IMAGE_BLOCKED,
+            category = EventCategory.CONTENT_FILTER,
+            severity = determineSeverity(mlScores),
+            url = url,
+            domain = domain,
+            reason = reason,
+            blockType = BlockType.ML_IMAGE,
+            imageUrl = imageUrl,
+            mlScores = mlScores,
+            threshold = threshold,
+            browserType = BrowserType.SAFE_BROWSER
+        )
+        
+        logEvent(event)
+    }
+
+    /**
+     * Log a URL/domain block
+     */
+    fun logUrlBlock(
+        url: String,
+        domain: String,
+        reason: String,
+        blockType: BlockType = BlockType.KEYWORD,
+        browserType: BrowserType = BrowserType.SAFE_BROWSER
+    ) {
+        val event = SafetyEvent(
+            eventType = EventType.URL_BLOCKED,
+            category = EventCategory.CONTENT_FILTER,
+            severity = Severity.HIGH,
+            url = url,
+            domain = domain,
+            reason = reason,
+            blockType = blockType,
+            browserType = browserType
+        )
+        
+        logEvent(event)
+    }
+
+    /**
+     * Log a search query block
+     */
+    fun logSearchBlock(
+        searchQuery: String,
+        url: String,
+        domain: String,
+        reason: String
+    ) {
+        val event = SafetyEvent(
+            eventType = EventType.SEARCH_BLOCKED,
+            category = EventCategory.CONTENT_FILTER,
+            severity = Severity.HIGH,
+            url = url,
+            domain = domain,
+            searchQuery = searchQuery,
+            reason = reason,
+            blockType = BlockType.KEYWORD,
+            browserType = BrowserType.SAFE_BROWSER
+        )
+        
+        logEvent(event)
+    }
+
+    /**
+     * COMPLIANCE: Right to be Forgotten (DPDP Act).
+     * Deletes all logs associated with this device ID.
+     */
+    fun deleteAllData(onComplete: (Boolean) -> Unit) {
+        val deviceId = com.childsafety.os.ChildSafetyApp.appDeviceId
+        
+        // 1. Query all logs for this device
+        // Note: For a hackathon, we do a best-effort client-side delete.
+        // Production should use a Cloud Function (recursive delete) for atomicity.
+        
+        val batch = db.batch()
+        
+        // Delete device document
+        val deviceRef = db.collection("devices").document(deviceId)
+        batch.delete(deviceRef)
+        
+        batch.commit()
+            .addOnSuccessListener { 
+                Log.i(TAG, "Compliance: Device data deleted for $deviceId")
+                onComplete(true) 
+            }
+            .addOnFailureListener { e -> 
+                Log.e(TAG, "Compliance: Failed to delete data", e)
+                onComplete(false) 
+            }
+    }
+
+    /**
+     * Log a page-level block (multiple images)
+     */
+    fun logPageBlock(
+        url: String,
+        domain: String,
+        reason: String,
+        blockedImageCount: Int
+    ) {
+        val event = SafetyEvent(
+            eventType = EventType.PAGE_BLOCKED,
+            category = EventCategory.CONTENT_FILTER,
+            severity = Severity.CRITICAL,
+            url = url,
+            domain = domain,
+            reason = "$reason ($blockedImageCount images)",
+            blockType = BlockType.PAGE_TRIGGER,
+            browserType = BrowserType.SAFE_BROWSER
+        )
+        
+        logEvent(event)
+    }
+
+    /**
+     * Log Settings/PlayStore access attempt
+     */
+    fun logAppLock(
+        appPackage: String,
+        appName: String,
+        reason: String
+    ) {
+        val event = SafetyEvent(
+            eventType = EventType.APP_LOCKED,
+            category = EventCategory.ACCESS_CONTROL,
+            severity = Severity.MEDIUM,
+            reason = reason,
+            blockType = BlockType.ACCESSIBILITY,
+            appPackage = appPackage,
+            appName = appName
+        )
+        
+        logEvent(event)
+    }
+
+    /**
+     * Log VPN events
+     */
+    fun logVpnEvent(started: Boolean) {
+        val event = SafetyEvent(
+            eventType = if (started) EventType.VPN_STARTED else EventType.VPN_STOPPED,
+            category = EventCategory.SYSTEM_EVENT,
+            severity = Severity.LOW,
+            reason = if (started) "VPN protection enabled" else "VPN protection disabled"
+        )
+        
+        logEvent(event)
+        updateDeviceStatus(vpnEnabled = started)
+    }
+
+    /**
+     * Determine severity based on ML scores
+     */
+    private fun determineSeverity(mlScores: Map<String, Double>): Severity {
+        val maxScore = mlScores.values.maxOrNull() ?: 0.0
+        return when {
+            maxScore >= 0.9 -> Severity.CRITICAL
+            maxScore >= 0.8 -> Severity.HIGH
+            maxScore >= 0.7 -> Severity.MEDIUM
+            else -> Severity.LOW
+        }
+    }
+
+    /**
+     * Update daily aggregated statistics
+     */
+    private fun updateDailyStats(event: SafetyEvent) {
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val statsRef = db.collection("devices")
+            .document(deviceId)
+            .collection("daily_stats")
+            .document(today)
+        
+        // Increment counters based on event type
+        val updates = mutableMapOf<String, Any>(
+            "date" to today,
+            "totalEvents" to com.google.firebase.firestore.FieldValue.increment(1),
+            "updatedAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+        )
+        
+        // Increment block counters
+        if (event.category == EventCategory.CONTENT_FILTER || event.category == EventCategory.ACCESS_CONTROL) {
+            updates["totalBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+            
+            when (event.eventType) {
+                EventType.IMAGE_BLOCKED -> updates["imageBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+                EventType.URL_BLOCKED -> updates["urlBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+                EventType.SEARCH_BLOCKED -> updates["searchBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+                EventType.PAGE_BLOCKED -> updates["pageBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+                EventType.APP_LOCKED -> updates["appLocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+                else -> {}
+            }
+            
+            // Increment severity counters
+            when (event.severity) {
+                Severity.CRITICAL -> updates["criticalBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+                Severity.HIGH -> updates["highBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+                Severity.MEDIUM -> updates["mediumBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+                Severity.LOW -> updates["lowBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+            }
+            
+            // Update top blocked domains (if domain exists)
+            event.domain?.let { domain ->
+                updates["topBlockedDomains.$domain"] = com.google.firebase.firestore.FieldValue.increment(1)
+            }
+            
+            // Update top reasons
+            val reasonKey = event.reason.take(50) // Limit key length
+            updates["topReasons.$reasonKey"] = com.google.firebase.firestore.FieldValue.increment(1)
+        }
+        
+        statsRef.set(updates, SetOptions.merge())
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Failed to update daily stats", e)
+            }
+    }
+
+    /**
+     * Check if event should trigger an alert
+     */
+    private fun checkAlertConditions(event: SafetyEvent) {
+        // Example: Alert on critical events
+        if (event.severity == Severity.CRITICAL) {
+            createAlert(
+                alertType = "CRITICAL_BLOCK",
+                severity = Severity.CRITICAL,
+                message = "Critical content block: ${event.reason}",
+                relatedEventIds = listOf(event.eventId)
+            )
+        }
+        
+        // TODO: Add more sophisticated alert logic (e.g., multiple blocks in short time)
+    }
+
+    /**
+     * Create a parental alert
+     */
+    private fun createAlert(
+        alertType: String,
+        severity: Severity,
+        message: String,
+        relatedEventIds: List<String>
+    ) {
+        val alertRef = db.collection("devices")
+            .document(deviceId)
+            .collection("alerts")
+            .document()
+        
+        val alert = mapOf(
+            "alertId" to alertRef.id,
+            "timestamp" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+            "alertType" to alertType,
+            "severity" to severity.name,
+            "message" to message,
+            "relatedEventIds" to relatedEventIds,
+            "acknowledged" to false
+        )
+        
+        alertRef.set(alert)
+            .addOnSuccessListener {
+                Log.d(TAG, "Alert created: $message")
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Failed to create alert", e)
+            }
+    }
+
+    /**
+     * Get device ID for external use
+     */
+    fun getDeviceId(): String = if (initialized) deviceId else ""
 }

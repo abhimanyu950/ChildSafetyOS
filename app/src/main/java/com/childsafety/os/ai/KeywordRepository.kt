@@ -11,7 +11,9 @@ object KeywordRepository {
         "kill",
         "suicide",
         "terror",
-        "bomb"
+        "bomb",
+        "Hotgirlpic",
+        "Sexy"
     )
 
     // Medium-risk keywords (context dependent)

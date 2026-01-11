@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Child Safety Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-content">
+                <h1>🛡️ Child Safety Dashboard</h1>
+                <div class="header-controls">
+                    <div class="device-selector">
+                        <label for="deviceId">Device:</label>
+                        <input type="text" id="deviceId" placeholder="Enter Device ID">
+                        <button id="connectBtn" class="btn-primary">Connect</button>
+                    </div>
+                    <div class="connection-status" id="connectionStatus">
+                        <span class="status-dot offline"></span>
+                        <span class="status-text">Disconnected</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="dashboard-main">
+            <!-- Device Overview Cards -->
+            <section class="overview-section">
+                <div class="card device-info">
+                    <h2>Device Status</h2>
+                    <div class="device-details" id="deviceDetails">
+                        <div class="detail-item">
+                            <span class="label">Device Name:</span>
+                            <span class="value" id="deviceName">-</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">Child Name:</span>
+                            <span class="value" id="childName">-</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">Last Seen:</span>
+                            <span class="value" id="lastSeen">-</span>
+                        </div>
+                        <div class="protection-badges">
+                            <span class="badge" id="vpnBadge">VPN: OFF</span>
+                            <span class="badge" id="adminBadge">Admin: OFF</span>
+                            <span class="badge" id="lockBadge">Lock: OFF</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card stats-summary">
+                    <h2>Today's Activity</h2>
+                    <div class="stats-grid" id="todayStats">
+                        <div class="stat-item">
+                            <div class="stat-value" id="totalBlocks">0</div>
+                            <div class="stat-label">Total Blocks</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value critical" id="criticalBlocks">0</div>
+                            <div class="stat-label">Critical</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="imageBlocks">0</div>
+                            <div class="stat-label">Images</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="urlBlocks">0</div>
+                            <div class="stat-label">URLs</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card alerts-card">
+                    <h2>⚠️ Alerts</h2>
+                    <div class="alerts-list" id="alertsList">
+                        <p class="no-data">No alerts</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Live Events Feed -->
+            <section class="events-section">
+                <div class="card events-card">
+                    <div class="card-header">
+                        <h2>📊 Live Activity Feed</h2>
+                        <div class="filter-controls">
+                            <select id="severityFilter">
+                                <option value="all">All Severity</option>
+                                <option value="CRITICAL">Critical</option>
+                                <option value="HIGH">High</option>
+                                <option value="MEDIUM">Medium</option>
+                                <option value="LOW">Low</option>
+                            </select>
+                            <select id="typeFilter">
+                                <option value="all">All Types</option>
+                                <option value="IMAGE_BLOCKED">Image Blocks</option>
+                                <option value="URL_BLOCKED">URL Blocks</option>
+                                <option value="SEARCH_BLOCKED">Search Blocks</option>
+                                <option value="PAGE_BLOCKED">Page Blocks</option>
+                                <option value="APP_LOCKED">App Locks</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="events-list" id="eventsList">
+                        <p class="no-data">Connect to a device to see events</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Analytics Dashboard -->
+            <section class="analytics-section">
+                <div class="card chart-card">
+                    <h2>📈 Top Blocked Domains</h2>
+                    <div class="chart-container" id="domainsChart">
+                        <p class="no-data">No data available</p>
+                    </div>
+                </div>
+
+                <div class="card chart-card">
+                    <h2>🎯 Block Reasons</h2>
+                    <div class="chart-container" id="reasonsChart">
+                        <p class="no-data">No data available</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    
+    <!-- Dashboard Script -->
+    <script src="dashboard.js"></script>
+</body>
+</html>

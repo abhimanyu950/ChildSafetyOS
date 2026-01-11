@@ -9,18 +9,26 @@ import java.nio.ByteOrder
 object TfLiteManager {
 
     private val interpreters = mutableMapOf<String, Interpreter>()
+    private val lock = Any() // Thread safety lock
 
     // ------------------------------------------------------------
-    // Interpreter loader (cached, safe)
+    // Interpreter loader (cached, thread-safe)
     // ------------------------------------------------------------
     private fun getInterpreter(
         context: Context,
         modelName: String
     ): Interpreter {
-        return interpreters.getOrPut(modelName) {
-            Log.i("TfLiteManager", "Loading model: $modelName")
-            val modelBuffer = loadModelFile(context, modelName)
-            Interpreter(modelBuffer)
+        // Check cache without lock first (fast path)
+        interpreters[modelName]?.let { return it }
+        
+        // Synchronized loading (prevents multiple concurrent loads)
+        synchronized(lock) {
+            // Double-check after acquiring lock
+            return interpreters.getOrPut(modelName) {
+                Log.i("TfLiteManager", "Loading model: $modelName")
+                val modelBuffer = loadModelFile(context, modelName)
+                Interpreter(modelBuffer)
+            }
         }
     }
 
