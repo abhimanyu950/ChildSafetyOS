@@ -137,8 +137,15 @@ body {
 }
 
 @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
 }
 
 /* Card Styles */
@@ -216,7 +223,7 @@ body {
 
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 16px;
 }
 
@@ -322,6 +329,7 @@ body {
         opacity: 0;
         transform: translateX(-20px);
     }
+
     to {
         opacity: 1;
         transform: translateX(0);
@@ -467,15 +475,15 @@ body {
         flex-direction: column;
         align-items: stretch;
     }
-    
+
     .device-selector {
         flex-direction: column;
     }
-    
+
     .device-selector input {
         width: 100%;
     }
-    
+
     .analytics-section {
         grid-template-columns: 1fr;
     }

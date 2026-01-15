@@ -59,8 +59,12 @@ object TrustedImageDomains {
         if (host.isNullOrBlank()) return false
         val lowerHost = host.lowercase()
         
+        // Get dynamic domains (cached)
+        val dynamicTrusted = com.childsafety.os.cloud.RemoteConfigManager.getDynamicTrustedDomains()
+        val allTrusted = trusted + dynamicTrusted
+
         // STRICT match: must END with trusted domain
-        return trusted.any { domain ->
+        return allTrusted.any { domain ->
             lowerHost == domain || lowerHost.endsWith(".$domain")
         }
     }

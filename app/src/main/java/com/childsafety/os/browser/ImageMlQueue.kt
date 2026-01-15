@@ -6,10 +6,14 @@ import android.util.Log
 import android.webkit.WebView
 import com.childsafety.os.ChildSafetyApp
 import com.childsafety.os.ai.ImageRiskClassifier
+import com.childsafety.os.ai.SkinRatioAnalyzer
+import com.childsafety.os.ai.EdgeDensityAnalyzer
 import com.childsafety.os.ai.TfLiteManager
 import com.childsafety.os.cache.ImageHashCache
 import com.childsafety.os.cloud.FirebaseManager
 import com.childsafety.os.policy.AgeGroup
+import com.childsafety.os.policy.ContentDecisionEngine
+import com.childsafety.os.policy.Decision
 import com.childsafety.os.policy.ThresholdProvider
 import com.childsafety.os.policy.TrustedImageDomains
 import kotlinx.coroutines.*
@@ -39,8 +43,14 @@ object ImageMlQueue {
     // Coroutine scope for async processing
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
-    // Cache of processed images: imageId -> blocked
-    private val processedCache = ConcurrentHashMap<String, Boolean>()
+    // Cache of processed images: imageId -> blocked (LRU limited to 1000 items)
+    private val processedCache = java.util.Collections.synchronizedMap(
+        object : java.util.LinkedHashMap<String, Boolean>(1000, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean {
+                return size > 1000
+            }
+        }
+    )
     
     // Pending images being analyzed
     private val pendingImages = ConcurrentHashMap<String, Boolean>()
@@ -206,6 +216,15 @@ object ImageMlQueue {
         
         Log.d(TAG, "Analyzing: $imageId -> $url")
 
+        // 0. Battery Optimization Check
+        // If battery is low (< 20%) and NOT charging, skip expensive ML to save power.
+        if (isBatteryLow(context)) {
+            Log.w(TAG, "🔋 Battery low! Skipping ML for: $imageId")
+            processedCache[imageId] = false // Treat as safe (Fail Open)
+            unblurSafeImage(imageId)
+            return@withContext
+        }
+
         // 1. Download image
         val imageBytes = downloadImage(url)
         if (imageBytes == null || imageBytes.isEmpty()) {
@@ -257,18 +276,37 @@ object ImageMlQueue {
             return@withContext
         }
         
-        // 6. Cache MISS - Run ML classification (SLOW 1-3s)
-        Log.i(TAG, "Cache MISS: $imageId. Running ML analysis...")
+        // 6. Cache MISS - Run ML classification with multi-modal analysis
+        Log.i(TAG, "Cache MISS: $imageId. Running multi-modal analysis...")
         val riskResult = ImageRiskClassifier.analyze(context, bitmap)
         
-        // 7. Apply age-appropriate thresholds
-        val thresholds = ThresholdProvider.getThresholds(currentAgeGroup)
-        val blocked = riskResult.porn >= thresholds.pornThreshold ||
-                      riskResult.hentai >= thresholds.hentaiThreshold ||
-                      riskResult.sexy >= thresholds.sexyThreshold
-
-        Log.i(TAG, "Result: $imageId blocked=$blocked " +
-                   "porn=${riskResult.porn} sexy=${riskResult.sexy} hentai=${riskResult.hentai}")
+        // Run auxiliary analyzers for false-positive prevention
+        val skinRatio = SkinRatioAnalyzer.analyze(bitmap)
+        val edgeDensity = EdgeDensityAnalyzer.analyze(bitmap)
+        
+        // 7. Create signals and run decision engine
+        val signals = ContentDecisionEngine.createSignalsFromImage(
+            imageResult = riskResult,
+            skinRatio = skinRatio,
+            edgeDensity = edgeDensity,
+            activeMode = currentAgeGroup
+        )
+        
+        val decision = ContentDecisionEngine.decide(signals)
+        
+        // CRITICAL: Block for both BLOCK and UNCERTAIN decisions in CHILD mode
+        // Only ALLOW should unblur content
+        val blocked = decision.decision == Decision.BLOCK || 
+                      (decision.decision == Decision.UNCERTAIN && currentAgeGroup == AgeGroup.CHILD)
+        val shouldBlur = decision.decision != Decision.ALLOW // Keep blurred for WARN and UNCERTAIN too
+        
+        Log.w(TAG, "🔍 DECISION: $imageId -> ${decision.decision} " +
+                   "mode=$currentAgeGroup blocked=$blocked " +
+                   "porn=${String.format("%.2f", riskResult.porn)} " +
+                   "sexy=${String.format("%.2f", riskResult.sexy)} " +
+                   "hentai=${String.format("%.2f", riskResult.hentai)} " +
+                   "drawing=${String.format("%.2f", riskResult.drawing)} " +
+                   "reason=\"${decision.dominantReason}\"")
         
         // 🚨 CRITICAL ALERT: If highly explicit (porn > 0.8), send email to parent
         if (riskResult.porn >= 0.8) {
@@ -300,18 +338,26 @@ object ImageMlQueue {
         // 6. Cache the decision for future instant recognition
         ImageHashCache.cacheDecision(imageHash, blocked)
         
-        // 7. Update WebView
-        if (blocked) {
-            val newCount = blockedCount.incrementAndGet()
-            
-            // Notify listener (SafeBrowserActivity) to potentially block the whole page
-            blockListener?.onImageBlocked(newCount)
-            
-            // Keep blurred (already blurred by default)
-            blockImageInWebView(imageId)
-        } else {
-            // SAFE - Unblur with smooth transition
-            unblurSafeImage(imageId)
+        // 7. Update WebView based on decision
+        when {
+            blocked -> {
+                val newCount = blockedCount.incrementAndGet()
+                
+                // Notify listener (SafeBrowserActivity) to potentially block the whole page
+                blockListener?.onImageBlocked(newCount)
+                
+                // Keep blurred (already blurred by default)
+                blockImageInWebView(imageId)
+            }
+            shouldBlur -> {
+                // WARN or UNCERTAIN - keep blurred but don't count as blocked
+                Log.i(TAG, "Keeping blur for WARN/UNCERTAIN: $imageId")
+                // Don't unblur - leave image blurred
+            }
+            else -> {
+                // ALLOW - Unblur with smooth transition
+                unblurSafeImage(imageId)
+            }
         }
 
         // 8. Log to Firebase with comprehensive analytics
@@ -319,23 +365,21 @@ object ImageMlQueue {
             val scores = mapOf(
                 "porn" to riskResult.porn.toDouble(),
                 "sexy" to riskResult.sexy.toDouble(),
-                "hentai" to riskResult.hentai.toDouble()
+                "hentai" to riskResult.hentai.toDouble(),
+                "drawing" to riskResult.drawing.toDouble(),
+                "skinRatio" to skinRatio.toDouble(),
+                "edgeDensity" to edgeDensity.toDouble()
             )
             
-            val reason = buildString {
-                append("ML Detection: ")
-                if (riskResult.porn >= thresholds.pornThreshold) append("porn=${String.format("%.2f", riskResult.porn)} ")
-                if (riskResult.sexy >= thresholds.sexyThreshold) append("sexy=${String.format("%.2f", riskResult.sexy)} ")
-                if (riskResult.hentai >= thresholds.hentaiThreshold) append("hentai=${String.format("%.2f", riskResult.hentai)}")
-            }
+            val reason = "Decision: ${decision.decision} - ${decision.dominantReason}" +
+                         (decision.downgradeReason?.let { " [Downgraded: $it]" } ?: "")
             
             FirebaseManager.logImageBlock(
                 imageUrl = url,
                 mlScores = scores,
                 threshold = mapOf(
-                    "porn" to thresholds.pornThreshold.toDouble(),
-                    "sexy" to thresholds.sexyThreshold.toDouble(),
-                    "hentai" to thresholds.hentaiThreshold.toDouble()
+                    "mode" to currentAgeGroup.ordinal.toDouble(),
+                    "blocked" to if (blocked) 1.0 else 0.0
                 ),
                 reason = reason,
                 url = null, // Page URL not available here
@@ -423,6 +467,28 @@ object ImageMlQueue {
             java.net.URL(url).host
         } catch (e: Exception) {
             url.take(50)
+        }
+    }
+
+    /**
+     * Check if battery is low (< 20%) and not charging.
+     */
+    private fun isBatteryLow(context: Context): Boolean {
+        return try {
+            val bm = context.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
+            val batteryLevel = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            val isCharging = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val status = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_STATUS)
+                status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || 
+                status == android.os.BatteryManager.BATTERY_STATUS_FULL
+            } else {
+                false // Fallback for old devices
+            }
+            
+            // If strictly low and not plugging in
+            return batteryLevel < 20 && !isCharging
+        } catch (e: Exception) {
+            false // Process usually if we can't check
         }
     }
 }

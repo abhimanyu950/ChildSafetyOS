@@ -56,8 +56,8 @@ object EmojiDetector {
         "🥂" to 0.35f,
         "🍷" to 0.35f,
         "💊" to 0.5f,
-        "🚬" to 0.6f,
-        "🌿" to 0.55f
+        "🚬" to 0.6f
+       
     )
 
 

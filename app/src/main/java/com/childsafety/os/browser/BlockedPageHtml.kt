@@ -218,6 +218,103 @@ object BlockedPageHtml {
     )
 
     /**
+     * Page shown when explicit video content is detected
+     */
+    fun blockedVideoPage(reason: String, domain: String = ""): String = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }
+                .container {
+                    background: rgba(255,255,255,0.95);
+                    border-radius: 24px;
+                    padding: 40px 30px;
+                    text-align: center;
+                    max-width: 400px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+                    animation: slideUp 0.4s ease-out;
+                }
+                @keyframes slideUp {
+                    from { opacity: 0; transform: translateY(30px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+                .emoji {
+                    font-size: 80px;
+                    margin-bottom: 20px;
+                }
+                h1 {
+                    color: #e53e3e;
+                    font-size: 24px;
+                    margin-bottom: 16px;
+                    font-weight: 700;
+                }
+                .reason {
+                    background: #fff5f5;
+                    color: #c53030;
+                    padding: 12px 16px;
+                    border-radius: 12px;
+                    font-size: 14px;
+                    margin-bottom: 20px;
+                    border: 1px solid #feb2b2;
+                }
+                p {
+                    color: #4a5568;
+                    font-size: 15px;
+                    line-height: 1.6;
+                    margin-bottom: 24px;
+                }
+                .btn {
+                    background: linear-gradient(135deg, #667eea, #764ba2);
+                    color: white;
+                    border: none;
+                    padding: 14px 32px;
+                    border-radius: 12px;
+                    font-size: 16px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    text-decoration: none;
+                    display: inline-block;
+                    margin: 8px;
+                }
+                .btn-danger {
+                    background: linear-gradient(135deg, #e53e3e, #c53030);
+                }
+                .footer {
+                    margin-top: 24px;
+                    color: #a0aec0;
+                    font-size: 12px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="emoji">🛡️</div>
+                <h1>Video Blocked</h1>
+                <div class="reason">$reason</div>
+                <p>This video was automatically blocked because our AI detected content that isn't safe for you.</p>
+                <button class="btn btn-danger" onclick="history.back()">← Go Back</button>
+                <a href="https://www.google.com" class="btn">🔍 Search</a>
+                <div class="footer">
+                    🛡️ Protected by ChildSafetyOS<br>
+                    ${if (domain.isNotEmpty()) "<small>$domain</small>" else ""}
+                </div>
+            </div>
+        </body>
+        </html>
+    """.trimIndent()
+
+    /**
      * Legacy method for domain blocking
      */
     fun blockedDomainPage(domain: String): String = forCategory(null, domain)

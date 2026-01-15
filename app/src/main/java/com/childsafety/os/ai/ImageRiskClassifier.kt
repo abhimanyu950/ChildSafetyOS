@@ -7,7 +7,9 @@ import android.util.Log
 data class ImageRiskResult(
     val porn: Float,
     val sexy: Float,
-    val hentai: Float
+    val hentai: Float,
+    val drawing: Float = 0f,
+    val neutral: Float = 0f
 )
 
 object ImageRiskClassifier {
@@ -28,10 +30,12 @@ object ImageRiskClassifier {
             val result = ImageRiskResult(
                 porn = nsfwResult.porn,
                 sexy = nsfwResult.sexy,
-                hentai = nsfwResult.hentai
+                hentai = nsfwResult.hentai,
+                drawing = nsfwResult.drawing,
+                neutral = nsfwResult.neutral
             )
 
-            Log.i(TAG, "ML scores - porn=${result.porn} sexy=${result.sexy} hentai=${result.hentai}")
+            Log.i(TAG, "ML scores - porn=${result.porn} sexy=${result.sexy} hentai=${result.hentai} drawing=${result.drawing}")
             result
             
         } catch (e: Exception) {

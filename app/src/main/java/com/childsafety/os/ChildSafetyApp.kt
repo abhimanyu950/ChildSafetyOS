@@ -7,6 +7,9 @@ import com.childsafety.os.cloud.EventUploader
 import com.childsafety.os.cloud.FirebaseManager
 import com.childsafety.os.util.DeviceUtils
 import com.google.firebase.FirebaseApp
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class ChildSafetyApp : Application() {
 
@@ -33,10 +36,33 @@ class ChildSafetyApp : Application() {
 
             // Initialize Firebase
             FirebaseApp.initializeApp(this)
+            
+            // Initialize App Check for enhanced security (device attestation)
+            try {
+                val appCheck = com.google.firebase.appcheck.FirebaseAppCheck.getInstance()
+                appCheck.installAppCheckProviderFactory(
+                    com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory.getInstance()
+                )
+                Log.i(TAG, "App Check initialized with Play Integrity")
+            } catch (e: Exception) {
+                Log.w(TAG, "App Check init failed (debug mode or no Play Services)", e)
+            }
+            
             FirebaseManager.init(this)
+            com.childsafety.os.cloud.RemoteConfigManager.init()
+            com.childsafety.os.gamification.GamificationManager.init(this)
+            
+            // Initialize Anonymous Authentication (runs in background)
+            GlobalScope.launch(Dispatchers.IO) {
+                val authSuccess = com.childsafety.os.cloud.AuthManager.initAuth()
+                if (authSuccess) {
+                    Log.i(TAG, "Auth initialized. UID: ${com.childsafety.os.cloud.AuthManager.userId}")
+                } else {
+                    Log.w(TAG, "Auth initialization failed - running without auth")
+                }
+            }
 
-            // Log app start event - using local variables to avoid any type confusion
-            // Log app start event - using local variables to avoid any type confusion
+            // Log app start event
             val api: Int = Build.VERSION.SDK_INT
             val device: String = appDeviceId
             EventUploader.logAppStart(api.toString(), device)
@@ -47,5 +73,3 @@ class ChildSafetyApp : Application() {
         }
     }
 }
-
-

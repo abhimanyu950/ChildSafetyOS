@@ -16,11 +16,27 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            // Explicitly include all major ABIs to ensure the APK works on physical devices
+            // (fixes "App not installed as app isn't compatible with your phone")
+            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
+        }
     }
 
     // 🔴 CRITICAL FOR TENSORFLOW LITE (DO NOT REMOVE)
     aaptOptions {
         noCompress("tflite")
+    }
+
+    // 📦 ABI SPLITS - Creates separate APKs per architecture (smaller downloads)
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true // Also create a universal APK for fallback
+        }
     }
 
     buildTypes {
@@ -68,10 +84,14 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore-ktx:25.0.0")
     implementation("com.google.firebase:firebase-common-ktx:21.0.0")
     implementation("com.google.firebase:firebase-messaging-ktx:24.0.0")
+    implementation("com.google.firebase:firebase-config-ktx:21.6.0")
+    implementation("com.google.firebase:firebase-appcheck-playintegrity:18.0.0") // App Check
+    implementation("com.google.firebase:firebase-auth-ktx:23.0.0") // Authentication
 
     /* -------- TENSORFLOW LITE (PRODUCTION SAFE) -------- */
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-task-text:0.4.4") // For BertNLClassifier
 
     /* -------- TESTING -------- */
     testImplementation("junit:junit:4.13.2")

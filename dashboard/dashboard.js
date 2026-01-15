@@ -197,7 +197,10 @@ function createEventDetails(event) {
 
 // Listen to Daily Stats
 function listenToDailyStats() {
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    // Use local date format (YYYY-MM-DD) to match Android app's SimpleDateFormat
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    console.log('Looking for daily_stats with date:', today);
     const statsRef = db.collection('devices')
         .doc(currentDeviceId)
         .collection('daily_stats')
@@ -206,6 +209,8 @@ function listenToDailyStats() {
     statsListener = statsRef.onSnapshot((doc) => {
         if (doc.exists) {
             const stats = doc.data();
+            console.log('Daily stats received:', stats);
+            console.log('Video blocks from daily_stats:', stats.videoBlocks);
             updateTodayStats(stats);
             updateChartsData(stats);
         } else {
@@ -233,6 +238,7 @@ function calculateStatsFromEvents() {
                 totalBlocks: 0,
                 criticalBlocks: 0,
                 imageBlocks: 0,
+                videoBlocks: 0,
                 urlBlocks: 0,
                 searchBlocks: 0,
                 pageBlocks: 0,
@@ -248,6 +254,7 @@ function calculateStatsFromEvents() {
                     stats.totalBlocks++;
 
                     if (event.eventType === 'IMAGE_BLOCKED') stats.imageBlocks++;
+                    if (event.eventType === 'VIDEO_BLOCKED') stats.videoBlocks++;
                     if (event.eventType === 'URL_BLOCKED') stats.urlBlocks++;
                     if (event.eventType === 'SEARCH_BLOCKED') stats.searchBlocks++;
                     if (event.eventType === 'PAGE_BLOCKED') stats.pageBlocks++;
@@ -280,6 +287,7 @@ function updateTodayStats(stats) {
     document.getElementById('totalBlocks').textContent = stats.totalBlocks || 0;
     document.getElementById('criticalBlocks').textContent = stats.criticalBlocks || 0;
     document.getElementById('imageBlocks').textContent = stats.imageBlocks || 0;
+    document.getElementById('videoBlocks').textContent = stats.videoBlocks || 0;
     document.getElementById('urlBlocks').textContent = stats.urlBlocks || 0;
 }
 
@@ -311,10 +319,12 @@ function updateChartsData(stats) {
 function renderBarChart(data) {
     const maxValue = Math.max(...data.map(d => d[1]));
     return data.map(([label, value]) => {
+        // Restore dots for display (pornhub_com -> pornhub.com)
+        const displayLabel = label.replace(/_/g, '.');
         const percentage = (value / maxValue) * 100;
         return `
             <div class="chart-bar">
-                <div class="chart-label" title="${label}">${label}</div>
+                <div class="chart-label" title="${displayLabel}">${displayLabel}</div>
                 <div class="chart-bar-fill" style="width: ${percentage}%">
                     <span class="chart-value">${value}</span>
                 </div>
@@ -396,6 +406,7 @@ function formatEventType(type) {
 function getEventIcon(type) {
     const icons = {
         'IMAGE_BLOCKED': '🖼️',
+        'VIDEO_BLOCKED': '🎥',
         'URL_BLOCKED': '🚫',
         'SEARCH_BLOCKED': '🔍',
         'PAGE_BLOCKED': '📄',

@@ -11,6 +11,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -74,6 +77,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Enable edge-to-edge display for proper status bar and notch handling
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        
         // Initialize image cache for instant recognition
         com.childsafety.os.cache.ImageHashCache.init(this)
         
@@ -99,6 +105,8 @@ class MainActivity : ComponentActivity() {
             
                 var showPinDialog by remember { mutableStateOf(false) }
                 var pinError by remember { mutableStateOf<String?>(null) }
+                var pendingAction by remember { mutableStateOf<String?>(null) } // "DISABLE_ADMIN", "DISABLE_VPN", "CHANGE_AGE_MODE"
+                var pendingAgeGroup by remember { mutableStateOf<AgeGroup?>(null) } // For age mode changes
                 
                 // Track admin status
                 val devicePolicyManager = getSystemService(android.content.Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
@@ -110,15 +118,24 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
-                    MainScreen(
+                    ModernMainScreen(
                         vpnEnabled = vpnEnabled,
                         isAdminActive = isAdminActive,
                         isAccessibilityActive = isAccessibilityActive,
                         selectedAgeGroup = selectedAgeGroup,
-                        onVpnToggle = { toggleVpn() },
+                        onVpnToggle = { 
+                            if (vpnEnabled) {
+                                // Require PIN to disable VPN
+                                pendingAction = "DISABLE_VPN"
+                                showPinDialog = true
+                            } else {
+                                toggleVpn() 
+                            }
+                        },
                         onAdminToggle = { 
                             if (isAdminActive) {
                                 // Request PIN to disable
+                                pendingAction = "DISABLE_ADMIN"
                                 showPinDialog = true
                             } else {
                                 // Enable Admin
@@ -136,8 +153,10 @@ class MainActivity : ComponentActivity() {
                         },
                         onOpenBrowser = { openSafeBrowser() },
                         onAgeGroupChange = { newAgeGroup ->
-                            selectedAgeGroup = newAgeGroup
-                            Toast.makeText(this@MainActivity, "Age mode: ${newAgeGroup.name}", Toast.LENGTH_SHORT).show()
+                            // Require PIN for ANY age mode change (parent must authorize)
+                            pendingAgeGroup = newAgeGroup
+                            pendingAction = "CHANGE_AGE_MODE"
+                            showPinDialog = true
                         },
                         onRequestDataDeletion = {
                             // Open email client to request data deletion
@@ -172,15 +191,41 @@ class MainActivity : ComponentActivity() {
                             onDismiss = { 
                                 showPinDialog = false 
                                 pinError = null
+                                pendingAction = null
+                                pendingAgeGroup = null
                             },
                             onPinEntered = { pin ->
                                 if (pin == "1234") { // Hardcoded Parent PIN
-                                    // Remove Admin
-                                    devicePolicyManager.removeActiveAdmin(adminComponentName)
-                                    isAdminActive = false
+                                    when (pendingAction) {
+                                        "DISABLE_ADMIN" -> {
+                                            // Remove Admin
+                                            devicePolicyManager.removeActiveAdmin(adminComponentName)
+                                            isAdminActive = false
+                                            Toast.makeText(this@MainActivity, "Admin Protection Disabled by Parent", Toast.LENGTH_SHORT).show()
+                                            // Log to Firebase
+                                            com.childsafety.os.cloud.FirebaseManager.logSettingDisabledByParent("ADMIN_PROTECTION")
+                                        }
+                                        "DISABLE_VPN" -> {
+                                            // Stop VPN
+                                            stopVpnService()
+                                            Toast.makeText(this@MainActivity, "VPN Protection Disabled by Parent", Toast.LENGTH_SHORT).show()
+                                            // Log to Firebase
+                                            com.childsafety.os.cloud.FirebaseManager.logSettingDisabledByParent("VPN_PROTECTION")
+                                        }
+                                        "CHANGE_AGE_MODE" -> {
+                                            // Change age mode after parent verification
+                                            pendingAgeGroup?.let { newAge ->
+                                                selectedAgeGroup = newAge
+                                                Toast.makeText(this@MainActivity, "Age mode changed to: ${newAge.name}", Toast.LENGTH_SHORT).show()
+                                                // Log to Firebase
+                                                com.childsafety.os.cloud.FirebaseManager.logAgeModeChange(newAge.name)
+                                            }
+                                        }
+                                    }
                                     showPinDialog = false
                                     pinError = null
-                                    Toast.makeText(this@MainActivity, "Protection Disabled", Toast.LENGTH_SHORT).show()
+                                    pendingAction = null
+                                    pendingAgeGroup = null
                                 } else {
                                     pinError = "Incorrect PIN"
                                 }
@@ -194,8 +239,17 @@ class MainActivity : ComponentActivity() {
                 DisposableEffect(Unit) {
                     val listener = androidx.lifecycle.LifecycleEventObserver { _, event ->
                         if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                            isAdminActive = devicePolicyManager.isAdminActive(adminComponentName)
-                            // Trigger recomposition for accessibility check
+                            val adminStatus = devicePolicyManager.isAdminActive(adminComponentName)
+                            val accessStatus = isAccessibilityServiceEnabled(this@MainActivity, com.childsafety.os.service.AppLockService::class.java)
+                            
+                            isAdminActive = adminStatus
+                            // Force Recomposition for Accessibility is handled by derivedStateOf but we need to verify sync
+                            
+                            // SYNC TO FIREBASE
+                            com.childsafety.os.cloud.FirebaseManager.updateDeviceStatus(
+                                adminEnabled = adminStatus,
+                                settingsLockEnabled = accessStatus
+                            )
                         }
                     }
                     lifecycle.addObserver(listener)
@@ -302,9 +356,10 @@ fun MainScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState()) // Enable scrolling
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            // Vertical arrangement defaults to Top, which is better for scrolling
         ) {
             // Header
             Column(
@@ -378,14 +433,54 @@ fun MainScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     // App Lock / Settings Lock
+                    // Play Store Compliance: Must show disclosure BEFORE redirection
+                    var showAccessDisclosure by remember { mutableStateOf(false) }
+
                     OutlinedButton(
-                        onClick = onAccessToggle,
+                        onClick = { 
+                            if (!isAccessibilityActive) {
+                                showAccessDisclosure = true 
+                            } else {
+                                onAccessToggle() 
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth().height(50.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = if (isAccessibilityActive) Color(0xFF38A169) else Color(0xFFE53E3E)
                         )
                     ) {
                         Text(if (isAccessibilityActive) "3. Settings Lock: ON" else "3. Enable Settings Lock")
+                    }
+                    
+                    if (showAccessDisclosure) {
+                        AlertDialog(
+                            onDismissRequest = { showAccessDisclosure = false },
+                            title = { Text("Permission Required") },
+                            text = {
+                                Text(
+                                    "ChildSafetyOS needs the Accessibility Service permission to function.\n\n" +
+                                    "Why do we need it?\n" +
+                                    "1. To detect when restricted apps are opened and lock them.\n" +
+                                    "2. To prevent the app from being force-stopped or uninstalled without a PIN.\n\n" +
+                                    "Privacy:\n" +
+                                    "This service runs LOCALLY. Your screen content is NOT sent to any server.\n\n" +
+                                    "Please find 'Child Safety OS' in the list and enable it."
+                                )
+                            },
+                            confirmButton = {
+                                Button(onClick = { 
+                                    showAccessDisclosure = false
+                                    onAccessToggle() 
+                                }) {
+                                    Text("I Understand")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showAccessDisclosure = false }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -403,6 +498,54 @@ fun MainScreen(
                 )
             ) {
                 Text("🌐 Open Safe Browser", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // --- PHASE 2: ENGAGEMENT ---
+            
+            // 1. Gamification / Rewards Card
+            val streak = com.childsafety.os.gamification.GamificationManager.getStreak()
+            val points = com.childsafety.os.gamification.GamificationManager.getPoints()
+            
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { /* Show detailed dashboard later */ },
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF6AD55)) // Orange for fun
+            ) {
+                Row(
+                   modifier = Modifier.padding(16.dp),
+                   verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("🥷", fontSize = 24.sp)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text("Cyber Ninja Status", fontWeight = FontWeight.Bold, color = Color.White)
+                        Text("$streak Day Streak • $points Points", fontSize = 12.sp, color = Color.White)
+                    }
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // 2. Focus Mode Toggle
+            var isFocusMode by remember { mutableStateOf(false) }
+            
+            Button(
+                onClick = { 
+                    isFocusMode = !isFocusMode
+                    com.childsafety.os.policy.BlockedAppsConfig.isFocusModeEnabled = isFocusMode
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isFocusMode) Color(0xFF805AD5) else Color.White.copy(alpha = 0.2f)
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = if (isFocusMode) "🧠 Focus Mode: ON" else "🧠 Start Focus Mode",
+                    color = Color.White
+                )
             }
             
             Spacer(modifier = Modifier.height(12.dp))
@@ -479,12 +622,54 @@ fun MainScreen(
             
             Spacer(modifier = Modifier.height(8.dp))
             
-            // Privacy & Data Controls
+            // Privacy Policy Dialog
+            var showPrivacyDialog by remember { mutableStateOf(false) }
+            
             TextButton(
-                onClick = { /* TODO: Launch Privacy Policy */ },
+                onClick = { showPrivacyDialog = true },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("🔒 Privacy Policy", color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp)
+            }
+            
+            if (showPrivacyDialog) {
+                AlertDialog(
+                    onDismissRequest = { showPrivacyDialog = false },
+                    title = { Text("Privacy Policy") },
+                    text = {
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            Text(
+                                text = """
+                                    Last Updated: January 2026
+                                    
+                                    1. Data Cleanliness
+                                    ChildSafetyOS prioritizes your privacy. We process text and images LOCALLY on your device whenever possible.
+                                    
+                                    2. Data Collection
+                                    We collect:
+                                    - Domain names (to block harmful sites)
+                                    - App usage stats (to lock apps)
+                                    - Device identifiers (for dashboard sync)
+                                    
+                                    3. Data Sharing
+                                    We do NOT sell your data. Data is only synced to your personal Parental Dashboard via secure Firebase connection.
+                                    
+                                    4. Permissions
+                                    We use high-privilege permissions (VPN, Accessibility, Admin) solely to enforce parental controls and prevent unauthorized removal.
+                                    
+                                    5. Contact
+                                    For data deletion or inquiries, use the 'Request Data Deletion' button.
+                                """.trimIndent(),
+                                fontSize = 13.sp
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(onClick = { showPrivacyDialog = false }) {
+                            Text("Close")
+                        }
+                    }
+                )
             }
             
             // Request Data Deletion via Email (DPDP Compliance)
@@ -494,6 +679,10 @@ fun MainScreen(
             ) {
                 Text("📧 Request Data Deletion (DPDP)", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
             }
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // (Advanced Management / Uninstall button removed by request)
         }
     }
 }
@@ -537,19 +726,25 @@ fun LockScreen(
             Button(
                 onClick = { 
                     if (pin == "1234") {
-                        onUnlock() // Actually we usually want to allow access, but here we just go Home to "Block" it.
-                        // Ideally we would finish() and let them proceed, but `startActivity(Settings)` brings us back in loop.
-                        // For SIMPLE blocking: We just block it. "Settings are disabled".
-                        // To allow parents: We would need a "Snooze" mechanics in Service.
-                        // user asked to "Protect uninstallation". Blocking Settings does that.
+                        // ENABLE BYPASS MODE - allows parent to access Settings for 30 seconds
+                        com.childsafety.os.service.AppLockService.enableBypassMode()
+                        onUnlock()
                     } else {
                         error = "Incorrect PIN"
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Unlock")
+                Text("Unlock (30 sec access)")
             }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "After unlocking, you have 30 seconds to change settings.",
+                fontSize = 11.sp,
+                color = Color.Gray,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
         }
     }
 }

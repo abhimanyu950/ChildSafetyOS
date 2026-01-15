@@ -71,6 +71,7 @@ object DomainPolicy {
 
     /**
      * Evaluates if a domain should be blocked
+     * Checks: Cloud whitelist → Cloud blocklist → Local blocklist
      */
     fun evaluate(host: String?): PolicyDecision {
         if (host.isNullOrBlank()) {
@@ -79,7 +80,17 @@ object DomainPolicy {
 
         val h = host.lowercase()
         
-        // Check each category for specific blocking reason
+        // 1. Check cloud whitelist first (parent-allowed domains)
+        if (com.childsafety.os.cloud.CloudPolicySync.isAllowedByCloud(h)) {
+            return PolicyDecision.allow()
+        }
+        
+        // 2. Check cloud blocklist (dynamic parent additions)
+        if (com.childsafety.os.cloud.CloudPolicySync.isBlockedByCloud(h)) {
+            return PolicyDecision.block(PolicyReason.DOMAIN, BlockCategory.CLOUD_BLOCKED)
+        }
+        
+        // 3. Check each local category for specific blocking reason
         val category = when {
             adultDomains.any { h == it || h.endsWith(".$it") } -> BlockCategory.ADULT
             gamblingDomains.any { h == it || h.endsWith(".$it") } -> BlockCategory.GAMBLING
@@ -110,7 +121,8 @@ object DomainPolicy {
         SOCIAL_MEDIA,
         DATING,
         EXPLICIT_TEXT,
-        EXPLICIT_IMAGE
+        EXPLICIT_IMAGE,
+        CLOUD_BLOCKED  // Dynamically blocked by parent via Firestore
     }
 }
 

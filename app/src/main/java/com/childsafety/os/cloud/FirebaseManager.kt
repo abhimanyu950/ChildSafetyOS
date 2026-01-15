@@ -126,8 +126,17 @@ object FirebaseManager {
             .addOnFailureListener { e ->
                 Log.e(TAG, "Failed to log event", e)
             }
+            
+        // GAMIFICATION HOOK:
+        // If this is a blocking event (Filter or Access Control), mark today as "Unsafe"
+        if (event.category == EventCategory.CONTENT_FILTER || event.category == EventCategory.ACCESS_CONTROL) {
+             com.childsafety.os.gamification.GamificationManager.onSafetyViolation()
+        }
     }
 
+    /**
+     * Log an image block with ML scores
+     */
     /**
      * Log an image block with ML scores
      */
@@ -153,6 +162,34 @@ object FirebaseManager {
             browserType = BrowserType.SAFE_BROWSER
         )
         
+        logEvent(event)
+    }
+
+    /**
+     * Log a video block with ML scores
+     */
+    fun logVideoBlock(
+        videoUrl: String,
+        mlScores: Map<String, Double>,
+        threshold: Map<String, Double>,
+        reason: String,
+        url: String? = null,
+        domain: String? = null
+    ) {
+        val event = SafetyEvent(
+            eventType = EventType.VIDEO_BLOCKED,
+            category = EventCategory.CONTENT_FILTER,
+            severity = determineSeverity(mlScores),
+            url = url,
+            domain = domain,
+            reason = reason,
+            blockType = BlockType.ML_IMAGE, // Reusing ML_IMAGE block type for now as it's ML-based
+            imageUrl = videoUrl, // Storing video URL / Frame ID in imageUrl field for now
+            mlScores = mlScores,
+            threshold = threshold,
+            browserType = BrowserType.SAFE_BROWSER
+        )
+
         logEvent(event)
     }
 
@@ -292,6 +329,65 @@ object FirebaseManager {
     }
 
     /**
+     * Log when a parent uses PIN to disable a protection setting
+     */
+    fun logSettingDisabledByParent(settingName: String) {
+        if (!initialized) return
+        
+        val event = SafetyEvent(
+            eventType = EventType.PROTECTION_DISABLED,
+            category = EventCategory.SYSTEM_EVENT,
+            severity = Severity.MEDIUM,
+            reason = "$settingName disabled by parent (PIN verified)"
+        )
+        
+        logEvent(event)
+        
+        // Also update device status based on setting
+        when (settingName) {
+            "VPN_PROTECTION" -> updateDeviceStatus(vpnEnabled = false)
+            "ADMIN_PROTECTION" -> updateDeviceStatus(adminEnabled = false)
+            "SETTINGS_LOCK" -> updateDeviceStatus(settingsLockEnabled = false)
+        }
+        
+        Log.i(TAG, "Setting disabled by parent: $settingName")
+    }
+
+    /**
+     * Log when a parent changes the age mode with PIN verification
+     */
+    fun logAgeModeChange(newAgeMode: String) {
+        if (!initialized) return
+        
+        val event = SafetyEvent(
+            eventType = EventType.PROTECTION_ENABLED,
+            category = EventCategory.SYSTEM_EVENT,
+            severity = Severity.LOW,
+            reason = "Age mode changed to $newAgeMode by parent (PIN verified)"
+        )
+        
+        logEvent(event)
+        Log.i(TAG, "Age mode changed by parent: $newAgeMode")
+    }
+
+    /**
+     * Log security alerts (PIN lockout, tampering attempts, etc.)
+     */
+    fun logSecurityAlert(alertType: String, details: String) {
+        if (!initialized) return
+        
+        val event = SafetyEvent(
+            eventType = EventType.PROTECTION_DISABLED,
+            category = EventCategory.SYSTEM_EVENT,
+            severity = Severity.CRITICAL,
+            reason = "SECURITY ALERT: $alertType - $details"
+        )
+        
+        logEvent(event)
+        Log.w(TAG, "Security Alert: $alertType - $details")
+    }
+
+    /**
      * Determine severity based on ML scores
      */
     private fun determineSeverity(mlScores: Map<String, Double>): Severity {
@@ -327,6 +423,7 @@ object FirebaseManager {
             
             when (event.eventType) {
                 EventType.IMAGE_BLOCKED -> updates["imageBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
+                EventType.VIDEO_BLOCKED -> updates["videoBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
                 EventType.URL_BLOCKED -> updates["urlBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
                 EventType.SEARCH_BLOCKED -> updates["searchBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
                 EventType.PAGE_BLOCKED -> updates["pageBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
@@ -344,11 +441,14 @@ object FirebaseManager {
             
             // Update top blocked domains (if domain exists)
             event.domain?.let { domain ->
-                updates["topBlockedDomains.$domain"] = com.google.firebase.firestore.FieldValue.increment(1)
+                // Sanitize domain (replace . with _) to prevent Firestore nested map interpretation
+                val safeDomain = domain.replace(".", "_")
+                updates["topBlockedDomains.$safeDomain"] = com.google.firebase.firestore.FieldValue.increment(1)
             }
             
             // Update top reasons
-            val reasonKey = event.reason.take(50) // Limit key length
+            // Also sanitize reason for potential dots
+            val reasonKey = event.reason.replace(".", "_").take(50)
             updates["topReasons.$reasonKey"] = com.google.firebase.firestore.FieldValue.increment(1)
         }
         
@@ -406,6 +506,20 @@ object FirebaseManager {
             .addOnFailureListener { e ->
                 Log.e(TAG, "Failed to create alert", e)
             }
+    }
+
+    /**
+     * Log a critical alert directly (e.g., Uninstall Attempt)
+     */
+    fun logCriticalAlert(title: String, message: String) {
+        if (!initialized) return
+        
+        createAlert(
+            alertType = title,
+            severity = Severity.CRITICAL,
+            message = message,
+            relatedEventIds = emptyList()
+        )
     }
 
     /**

@@ -12,7 +12,10 @@ import com.childsafety.os.ChildSafetyApp
 import com.childsafety.os.cloud.EventUploader
 import com.childsafety.os.policy.AgeGroup
 import com.childsafety.os.policy.DomainPolicy
-import com.childsafety.os.policy.PolicyEngine
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Safe Browser Activity with comprehensive content filtering.
@@ -43,6 +46,12 @@ class SafeBrowserActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Hide the grey action bar for fullscreen browser experience
+        supportActionBar?.hide()
+        
+        // Enable edge-to-edge display with proper insets handling
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
 
         // Get age group from intent
         val ageGroupName = intent.getStringExtra(EXTRA_AGE_GROUP) ?: "CHILD"
@@ -55,56 +64,21 @@ class SafeBrowserActivity : AppCompatActivity() {
         // Get start URL
         val startUrl = intent.getStringExtra(EXTRA_START_URL) ?: DEFAULT_URL
 
-        // Create layout
+        // Create layout with proper system bar padding
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+            // Handle system bar insets
+            fitsSystemWindows = true
+            setBackgroundColor(android.graphics.Color.parseColor("#1A1B2E"))
         }
 
-        // Create Navigation Bar
-        val navBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                140 // Height in pixels (approx 56dp)
-            )
-            setBackgroundColor(0xFF2D3748.toInt()) // Dark slate background
-            setPadding(16, 16, 16, 16)
-            gravity = android.view.Gravity.CENTER_VERTICAL
-        }
+        // Navigation Bar REMOVED as per requirements
+        // The browser is now single-purpose / kiosk-like for safety
 
-        // Helper to create nav buttons
-        fun createNavButton(text: String, onClick: () -> Unit): android.widget.Button {
-            return android.widget.Button(this).apply {
-                this.text = text
-                setTextColor(0xFFFFFFFF.toInt()) // White text
-                textSize = 18f
-                layoutParams = LinearLayout.LayoutParams(
-                    0, 
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 
-                    1f // Equal weight
-                )
-                setTypeface(null, android.graphics.Typeface.BOLD)
-                setBackgroundColor(0x00000000) // Transparent background
-                setOnClickListener { onClick() }
-            }
-        }
-
-        val backButton = createNavButton("⬅️") { if (webView.canGoBack()) webView.goBack() }
-        val fwdButton = createNavButton("➡️") { if (webView.canGoForward()) webView.goForward() }
-        val refreshButton = createNavButton("🔄") { webView.reload() }
-        val closeButton = createNavButton("❌") { finish() }
-
-        navBar.addView(backButton)
-        navBar.addView(fwdButton)
-        navBar.addView(refreshButton)
-        navBar.addView(closeButton)
-
-        // Add views to layout (NavBar at TOP, WebView below)
-        layout.addView(navBar)
 
         // Create and configure WebView
         webView = createSafeWebView()
@@ -257,42 +231,55 @@ class SafeBrowserActivity : AppCompatActivity() {
                                      host.contains("search.")
 
                 if (isSearchEngine) {
-                    // Filter mainly for explicit sexual content in search queries
-                    // Expanded list to catch "soft core" suggestive searches as requested by user
-                    // "Block like you did for domain search" -> Immediate block for these terms
-                    val explicitKeywords = listOf(
-                        "porn", "sex", "xxx", "hentai", "nude", "erotic", 
-                        "xvideos", "xnxx", "redtube", "brazzers",
-                        "rape", "suicide", "self-harm",
-                        // Suggestive / Soft-core terms (User requested blocking "hot pics" etc)
-                        "hot girl", "hot pic", "bikini", "lingerie", "underwear",
-                        "naked", "boobs", "tits", "booty", "ass", "milf", "ebony",
-                        "escort", "strip", "sexy", "babe"
-                    )
+                    // Extract search query from URL
+                    // Common params: q= (Google/Bing), p= (Yahoo), query=, text=
+                    val queryParams = listOf("q", "p", "query", "text", "search_query")
+                    var searchQuery = ""
                     
-                    // Simple check: does the URL contain a blocked keyword?
-                    // We check the whole URL because query params vary (q=, query=, etc.)
-                    // We limit this to search engines to avoid blocking legit sites with these substrings in random IDs
-                    val foundKeyword = explicitKeywords.find { keyword -> 
-                        // Use regex for word boundaries to avoid false positives (e.g. "essex" containing "sex")
-                        // But for "porn", partial match is usually bad enough. 
-                        // Let's stick to simple contains for the worst offenders.
-                        urlLower.contains(keyword)
+                    // Parse URL params manually or via Uri
+                    try {
+                        val uri = android.net.Uri.parse(url)
+                        for (param in queryParams) {
+                            val value = uri.getQueryParameter(param)
+                            if (!value.isNullOrBlank()) {
+                                searchQuery = value
+                                break
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Fallback regex if URI parsing fails
                     }
 
-                    if (foundKeyword != null) {
-                        Log.w(TAG, "Search query blocked: $foundKeyword in $host")
+                    if (searchQuery.isNotBlank()) {
+                        // Use advanced Context-Aware Text Classifier ASYNC
+                        val decodingQuery = java.net.URLDecoder.decode(searchQuery, "UTF-8")
                         
-                        // Log to Firebase with search analytics
-                        com.childsafety.os.cloud.FirebaseManager.logSearchBlock(
-                            searchQuery = foundKeyword,
-                            url = url,
-                            domain = host,
-                            reason = "Explicit keyword in search: '$foundKeyword'"
-                        )
-                        
-                        blockNavigation(view, url, host, DomainPolicy.BlockCategory.EXPLICIT_TEXT)
-                        return true
+                        // Launch in background to prevent UI freeze
+                        lifecycleScope.launch(Dispatchers.Default) {
+                            val classification = com.childsafety.os.ai.TextRiskClassifier.classify(
+                                this@SafeBrowserActivity, 
+                                decodingQuery, 
+                                currentAgeGroup
+                            )
+
+                            withContext(Dispatchers.Main) {
+                                if (classification.isRisky) {
+                                    Log.w(TAG, "Search query blocked: '$decodingQuery' (Confidence: ${classification.confidence})")
+                                    
+                                    // Log to Firebase with search analytics
+                                    com.childsafety.os.cloud.FirebaseManager.logSearchBlock(
+                                        searchQuery = decodingQuery,
+                                        url = url,
+                                        domain = host,
+                                        reason = classification.contextOverride ?: "Explicit content detected"
+                                    )
+                                    
+                                    blockNavigation(view, url, host, DomainPolicy.BlockCategory.EXPLICIT_TEXT)
+                                } else {
+                                    Log.i(TAG, "Search query allowed: '$decodingQuery' (Context: ${classification.contextOverride ?: "None"})")
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -340,6 +327,11 @@ class SafeBrowserActivity : AppCompatActivity() {
         }
 
 
+
+        override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+            super.onPageStarted(view, url, favicon)
+            VideoFrameAnalyzer.reset()
+        }
 
         override fun onPageFinished(view: WebView?, url: String?) {
             super.onPageFinished(view, url)
@@ -415,10 +407,6 @@ class SafeBrowserActivity : AppCompatActivity() {
 
     /**
      * Analyze page text for explicit content.
-     * 
-     * NOTE: Text analysis disabled for now as it causes too many false positives.
-     * Image ML and domain blocking are sufficient for content safety.
-     * Re-enable after fine-tuning the text classifier thresholds.
      */
     private fun analyzePageText(webView: WebView?, url: String?) {
         // Skip text analysis for trusted domains
@@ -436,13 +424,8 @@ class SafeBrowserActivity : AppCompatActivity() {
             return
         }
 
-        // Text/emoji analysis is currently disabled to prevent false positives
-        // The image ML scanner and domain blocking provide sufficient protection
-        // TODO: Re-enable after fine-tuning text classifier thresholds
+        // Text/emoji analysis enabled safely on background thread
         
-        Log.d(TAG, "Text analysis skipped for: $url (disabled to prevent false positives)")
-        
-        /*
         val js = """
             (function() {
                 var text = document.body.innerText || '';
@@ -453,35 +436,52 @@ class SafeBrowserActivity : AppCompatActivity() {
         webView?.evaluateJavascript(js) { result ->
             val pageText = result?.removeSurrounding("\"") ?: return@evaluateJavascript
             
-            // Check text for explicit content
-            if (PolicyEngine.shouldBlockText(this, pageText, currentAgeGroup)) {
-                Log.w(TAG, "Page text blocked: $url")
-                
-                val blockedHtml = BlockedPageHtml.blockedTextPage()
-                webView.loadDataWithBaseURL(null, blockedHtml, "text/html", "UTF-8", null)
-                
-                EventUploader.logSafeBrowserBlock(
-                    deviceId = ChildSafetyApp.appDeviceId,
-                    url = url ?: "",
-                    reason = "EXPLICIT_TEXT"
+            lifecycleScope.launch(Dispatchers.Default) {
+                // Check text for explicit content
+                val isTextRisky = com.childsafety.os.ai.TextRiskClassifier.isRisky(
+                    this@SafeBrowserActivity, 
+                    pageText, 
+                    currentAgeGroup
                 )
-            }
-            
-            // Check emojis
-            if (PolicyEngine.shouldBlockEmoji(pageText, currentAgeGroup)) {
-                Log.w(TAG, "Page emoji blocked: $url")
                 
-                val blockedHtml = BlockedPageHtml.blockedTextPage()
-                webView.loadDataWithBaseURL(null, blockedHtml, "text/html", "UTF-8", null)
+                if (isTextRisky) {
+                   withContext(Dispatchers.Main) {
+                       Log.w(TAG, "Page text blocked: $url")
+                       val blockedHtml = BlockedPageHtml.blockedTextPage()
+                       webView.loadDataWithBaseURL(null, blockedHtml, "text/html", "UTF-8", null)
+                       
+                       com.childsafety.os.cloud.FirebaseManager.logUrlBlock(
+                           url = url ?: "",
+                           domain = getDomain(url ?: ""),
+                           reason = "EXPLICIT_TEXT",
+                           blockType = com.childsafety.os.cloud.models.BlockType.KEYWORD,
+                           browserType = com.childsafety.os.cloud.models.BrowserType.SAFE_BROWSER
+                       )
+                   }
+                   return@launch
+                }
                 
-                EventUploader.logSafeBrowserBlock(
-                    deviceId = ChildSafetyApp.appDeviceId,
-                    url = url ?: "",
-                    reason = "EXPLICIT_EMOJI"
-                )
+                // Check emojis
+                // Using simple heuristic - if text wasn't risky, check emoji specific
+                val isEmojiRisky = com.childsafety.os.ai.EmojiDetector.containsRiskyEmoji(pageText)
+                if (isEmojiRisky) {
+                    withContext(Dispatchers.Main) {
+                        Log.w(TAG, "Page emoji blocked: $url")
+                        
+                        val blockedHtml = BlockedPageHtml.blockedTextPage()
+                        webView.loadDataWithBaseURL(null, blockedHtml, "text/html", "UTF-8", null)
+                        
+                        com.childsafety.os.cloud.FirebaseManager.logUrlBlock(
+                           url = url ?: "",
+                           domain = getDomain(url ?: ""),
+                           reason = "EXPLICIT_EMOJI",
+                           blockType = com.childsafety.os.cloud.models.BlockType.KEYWORD,
+                           browserType = com.childsafety.os.cloud.models.BrowserType.SAFE_BROWSER
+                       )
+                    }
+                }
             }
         }
-        */
     }
 
     /**
@@ -495,8 +495,22 @@ class SafeBrowserActivity : AppCompatActivity() {
         return super.onKeyDown(keyCode, event)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Resume video analysis if page loaded
+        if (::webView.isInitialized && webView.url != null) {
+            VideoFrameAnalyzer.startAnalysis(this, webView, currentAgeGroup)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        VideoFrameAnalyzer.stopAnalysis()
+    }
+
     override fun onDestroy() {
         ImageMlQueue.setWebView(null)
+        VideoFrameAnalyzer.stopAnalysis()
         webView.destroy()
         super.onDestroy()
     }

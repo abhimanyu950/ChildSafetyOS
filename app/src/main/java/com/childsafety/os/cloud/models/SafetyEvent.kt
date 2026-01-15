@@ -39,6 +39,7 @@ data class SafetyEvent(
 
 enum class EventType {
     IMAGE_BLOCKED,
+    VIDEO_BLOCKED,
     URL_BLOCKED,
     SEARCH_BLOCKED,
     PAGE_BLOCKED,
