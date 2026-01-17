@@ -59,6 +59,11 @@ object TrustedImageDomains {
         if (host.isNullOrBlank()) return false
         val lowerHost = host.lowercase()
         
+        // 1. Check User Whitelist (Local Override)
+        if (UserWhitelistManager.isWhitelisted(lowerHost)) {
+            return true
+        }
+        
         // Get dynamic domains (cached)
         val dynamicTrusted = com.childsafety.os.cloud.RemoteConfigManager.getDynamicTrustedDomains()
         val allTrusted = trusted + dynamicTrusted

@@ -13,8 +13,10 @@ class WebViewInterceptor : WebViewClient() {
         if (now - lastInject < 500) return
         lastInject = now
 
+        // Use the mode-aware script, defaulting to Child/Teen mode (safe)
+        // NOTE: This interceptor is a fallback. SafeBrowserActivity handles mode-awareness directly.
         view.evaluateJavascript(
-            JsScripts.IMAGE_DETECTOR,
+            JsScripts.getImageDetectorScript(false),
             null
         )
     }

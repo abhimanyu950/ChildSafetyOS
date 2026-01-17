@@ -44,26 +44,58 @@ class SafeVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return when (intent?.action) {
+        val action = intent?.action
+        
+        // Handle age group update (even if running)
+        val ageGroupName = intent?.getStringExtra("age_group")
+        val ageGroup = if (ageGroupName != null) {
+            try {
+                com.childsafety.os.policy.AgeGroup.valueOf(ageGroupName)
+            } catch (e: Exception) {
+                com.childsafety.os.policy.AgeGroup.CHILD
+            }
+        } else {
+             // Default or keep existing if not provided
+             // For simplicity, default to CHILD if not specified to fail-safe
+             com.childsafety.os.policy.AgeGroup.CHILD
+        }
+        
+        return when (action) {
             ACTION_STOP -> {
                 stopVpn()
                 START_NOT_STICKY
             }
             ACTION_START, null -> {
-                startVpn()
+                // If named ACTION_START or null, we start/update
+                startVpn(ageGroup)
                 START_STICKY
             }
             else -> START_NOT_STICKY
         }
     }
 
-    private fun startVpn() {
+    private fun startVpn(ageGroup: com.childsafety.os.policy.AgeGroup) {
+        // If already running, check if we need to restart due to mode change
+        // For now, if running, we just log. 
+        // TODO: Ideally we should tear down and rebuild interface if DNS changes.
+        // Given the constraints, let's stop and start if running to ensure DNS update.
         if (isRunning.get()) {
-            Log.w(TAG, "VPN already running")
-            return
+            Log.i(TAG, "VPN already running. Restarting to apply new mode: $ageGroup")
+            stopVpn()
+            // Allow a brief moment for cleanup handled in stopVpn, but stopVpn is sync-ish on the flags.
+            // However, the thread/interface close might take a ms.
         }
 
         try {
+            // Select DNS based on Age Group
+            val dnsServer = when (ageGroup) {
+                com.childsafety.os.policy.AgeGroup.CHILD,
+                com.childsafety.os.policy.AgeGroup.TEEN -> VpnConstants.DNS_FAMILY // 1.1.1.3 (Malware + Porn)
+                com.childsafety.os.policy.AgeGroup.ADULT -> VpnConstants.DNS_SECURITY // 1.1.1.2 (Malware only)
+            }
+            
+            Log.i(TAG, "Starting VPN for ${ageGroup.name} with DNS: $dnsServer")
+
             // Start as foreground service with notification
             val notification = VpnNotification.build(this)
             startForeground(VpnConstants.NOTIFICATION_ID, notification)
@@ -72,8 +104,8 @@ class SafeVpnService : VpnService() {
             vpnInterface = Builder()
                 .setSession(VpnConstants.VPN_SESSION_NAME)
                 .addAddress(VpnConstants.VPN_ADDRESS, VpnConstants.VPN_PREFIX)
-               // .addRoute(VpnConstants.ROUTE_ALL, 0)
-                .addDnsServer(VpnConstants.DNS_FAMILY)
+               //.addRoute(VpnConstants.ROUTE_ALL, 0)
+                .addDnsServer(dnsServer)
                 .setBlocking(true)
                 .establish()
 
@@ -90,7 +122,7 @@ class SafeVpnService : VpnService() {
 
             // Log VPN start event
             EventUploader.logAppStart(
-                apiLevel = "VPN_START",
+                apiLevel = "VPN_START_${ageGroup.name}",
                 deviceId = ChildSafetyApp.appDeviceId
             )
 

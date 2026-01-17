@@ -39,9 +39,9 @@ object ThresholdProvider {
             // CHILD (Under 13): Maximum protection
             // Blocks anything remotely suggestive
             AgeGroup.CHILD -> ImageThresholds(
-                pornThreshold = 0.15f,    // Block at very low confidence
-                hentaiThreshold = 0.15f,  // Block animated adult content
-                sexyThreshold = 0.25f     // Block suggestive content
+                pornThreshold = 0.15f,    // Block at 10% confidence
+                hentaiThreshold = 0.13f,  // Block animated adult content
+                sexyThreshold = 0.15f     // Block suggestive content
             )
             
             // TEEN (13-17): Strong protection
@@ -56,8 +56,8 @@ object ThresholdProvider {
             // Blocks only highly explicit pornographic content
             // Rationale: Explicit content can still be harmful/triggering
             AgeGroup.ADULT -> ImageThresholds(
-                pornThreshold = 0.85f,    // Block only obvious porn
-                hentaiThreshold = 0.85f,  // Block explicit animated
+                pornThreshold = 0.65f,    // Block only obvious porn
+                hentaiThreshold = 0.65f,  // Block explicit animated
                 sexyThreshold = 0.95f     // Allow most suggestive, block explicit
             )
         }

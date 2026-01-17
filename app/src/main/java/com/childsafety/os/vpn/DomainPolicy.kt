@@ -11,9 +11,15 @@ object DomainPolicy {
     /**
      * Returns true if the domain should be blocked.
      * Uses the same policy as Safe Browser for consistency.
+     * 
+     * @param rawDomain The domain to check
+     * @param ageGroup The current age group (defaults to CHILD for max safety at VPN level)
      */
-    fun shouldBlockDomain(rawDomain: String): Boolean {
-        val decision = UnifiedDomainPolicy.evaluate(rawDomain)
+    fun shouldBlockDomain(
+        rawDomain: String, 
+        ageGroup: com.childsafety.os.policy.AgeGroup = com.childsafety.os.policy.AgeGroup.CHILD
+    ): Boolean {
+        val decision = UnifiedDomainPolicy.evaluate(rawDomain, ageGroup)
         return decision.blocked
     }
 }

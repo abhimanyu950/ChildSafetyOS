@@ -51,6 +51,7 @@ class ChildSafetyApp : Application() {
             FirebaseManager.init(this)
             com.childsafety.os.cloud.RemoteConfigManager.init()
             com.childsafety.os.gamification.GamificationManager.init(this)
+            com.childsafety.os.policy.UserWhitelistManager.init(this)
             
             // Initialize Anonymous Authentication (runs in background)
             GlobalScope.launch(Dispatchers.IO) {

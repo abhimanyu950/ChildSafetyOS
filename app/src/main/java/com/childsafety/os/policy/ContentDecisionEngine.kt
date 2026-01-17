@@ -78,10 +78,10 @@ object ContentDecisionEngine {
     
     private fun applyChildPolicy(signals: ContentSignals): Pair<Decision, String> {
         
-        // CHILD MODE THRESHOLDS - Very strict
-        val PORN_THRESHOLD = 0.15f      // Block at very low porn confidence
-        val HENTAI_THRESHOLD = 0.15f    // Block animated adult content
-        val SEXY_THRESHOLD = 0.25f      // Block suggestive content (bikinis, etc.)
+        // CHILD MODE THRESHOLDS - EXTREMELY STRICT (As per requirements: >10%)
+        val PORN_THRESHOLD = 0.10f      // Block at 10% confidence
+        val HENTAI_THRESHOLD = 0.10f    // Block at 10% confidence
+        val SEXY_THRESHOLD = 0.15f      // Block suggestive content > 15%
         
         // =====================================================
         // PRIORITY 1: BLOCK if ANY dangerous signal is high
@@ -93,7 +93,7 @@ object ContentDecisionEngine {
         }
         
         // Block if hentai score is above threshold (unless it's clearly a safe drawing)
-        if (signals.imageHentai >= HENTAI_THRESHOLD && signals.imageDrawing < 0.70f) {
+        if (signals.imageHentai >= HENTAI_THRESHOLD && signals.imageDrawing < 0.80f) {
             return Decision.BLOCK to "Adult animated content detected (${String.format("%.0f", signals.imageHentai * 100)}% confidence)"
         }
         
@@ -103,7 +103,7 @@ object ContentDecisionEngine {
         }
         
         // Block if combined image risk is high
-        if (signals.imageCore >= 0.30f) {
+        if (signals.imageCore >= 0.20f) {
             return Decision.BLOCK to "Combined risk score too high (${String.format("%.0f", signals.imageCore * 100)}%)"
         }
         
@@ -112,7 +112,7 @@ object ContentDecisionEngine {
         // =====================================================
         
         // If any risk score is non-trivial, flag as uncertain
-        if (signals.imagePorn >= 0.08f || signals.imageHentai >= 0.08f || signals.imageSexy >= 0.15f) {
+        if (signals.imagePorn >= 0.05f || signals.imageHentai >= 0.05f || signals.imageSexy >= 0.10f) {
             return Decision.UNCERTAIN to "Low-level risk detected - applying blur for safety"
         }
         
@@ -124,7 +124,7 @@ object ContentDecisionEngine {
         if (signals.imageDrawing >= 0.60f && 
             signals.imagePorn < 0.05f && 
             signals.imageHentai < 0.05f &&
-            signals.imageSexy < 0.10f) {
+            signals.imageSexy < 0.08f) {
             return Decision.ALLOW to "Safe drawing/cartoon content"
         }
         
@@ -134,7 +134,7 @@ object ContentDecisionEngine {
         }
         
         // Very low risk
-        if (signals.imageCore < 0.10f && signals.imageSexy < 0.10f) {
+        if (signals.imageCore < 0.08f && signals.imageSexy < 0.08f) {
             return Decision.ALLOW to "All scores in safe zone"
         }
         
@@ -153,21 +153,18 @@ object ContentDecisionEngine {
             return Decision.ALLOW to "Drawing/cartoon content"
         }
         
-        // BLOCK: High core score with confirmation
-        val blockCondition = signals.imageCore >= 0.75f &&
-            (signals.videoConsistency >= 2 || signals.textCore >= 0.40f)
-        
-        if (blockCondition) {
-            return Decision.BLOCK to "High risk with confirmation (imageCore=${String.format("%.2f", signals.imageCore)}, consistency=${signals.videoConsistency})"
+        // BLOCK: High core score (> 35% requirements roughly mapped)
+        if (signals.imageCore >= 0.35f || signals.imagePorn >= 0.35f) {
+             return Decision.BLOCK to "Explicit content detected (>35% confidence)"
         }
         
         // WARN: Sexy content without explicit porn
-        if (signals.imageSexy >= 0.60f && signals.imagePorn < 0.40f) {
-            return Decision.WARN to "Suggestive content detected (sexy=${String.format("%.2f", signals.imageSexy)})"
+        if (signals.imageSexy >= 0.50f && signals.imagePorn < 0.35f) {
+            return Decision.WARN to "Suggestive content detected"
         }
         
         // UNCERTAIN: Moderate risk
-        if (signals.imageCore >= 0.50f) {
+        if (signals.imageCore >= 0.30f) {
             return Decision.UNCERTAIN to "Moderate risk - review recommended"
         }
         
@@ -176,38 +173,31 @@ object ContentDecisionEngine {
 
     // =========================================================
     // ADULT MODE POLICY
-    // Adult mode prioritizes autonomy
+    // Adult mode prioritizes autonomy but blocks explicit content per requirements (>65%)
     // =========================================================
     
     private fun applyAdultPolicy(signals: ContentSignals): Pair<Decision, String> {
         
-        // NEVER block for: Drawing, Hentai alone, Sexy content
-        if (signals.imageDrawing >= 0.50f) {
+        // NEVER block for: Drawing, Hentai alone, Sexy content (unless extreme)
+        if (signals.imageDrawing >= 0.60f && signals.imagePorn < 0.60f) {
             return Decision.ALLOW to "Drawing/animated content (adult autonomy)"
         }
         
-        // Only hentai without porn = allow
-        if (signals.imageHentai >= 0.50f && signals.imagePorn < 0.50f) {
-            return Decision.ALLOW to "Animated content without explicit real material"
+        // BLOCK: Explicit content > 65% (Requirement)
+        if (signals.imagePorn >= 0.65f) {
+             return Decision.BLOCK to "Explicit content detected (>65% confidence)"
         }
         
-        // Only sexy = allow
-        if (signals.imageSexy >= 0.50f && signals.imagePorn < 0.60f) {
-            return Decision.ALLOW to "Suggestive but not explicit content"
-        }
-        
-        // BLOCK: Only very high porn with confirmed detection
-        val blockCondition = signals.imagePorn >= 0.85f && signals.videoConsistency >= 2
-        
-        if (blockCondition) {
-            return Decision.BLOCK to "Confirmed explicit content (porn=${String.format("%.2f", signals.imagePorn)}, consistency=${signals.videoConsistency})"
-        }
-        
-        // WARN: High porn but not confirmed
-        if (signals.imagePorn >= 0.70f) {
+        // WARN: High risk zone (50-65%)
+        if (signals.imagePorn >= 0.50f) {
             return Decision.WARN to "Potentially explicit content"
         }
         
+        // Only hentai without porn = allow
+        if (signals.imageHentai >= 0.60f && signals.imagePorn < 0.50f) {
+            return Decision.ALLOW to "Animated content without explicit real material"
+        }
+         
         return Decision.ALLOW to "Content acceptable for adult mode"
     }
 

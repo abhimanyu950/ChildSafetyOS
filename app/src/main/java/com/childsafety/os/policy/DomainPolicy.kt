@@ -249,6 +249,61 @@ object DomainPolicy {
     }
 
     /**
+     * Get numeric risk score for a domain (0-100)
+     * Used by the new Risk Engine.
+     */
+    fun getDomainRiskScore(host: String?): Int {
+        if (host.isNullOrBlank()) return 0
+        
+        val h = host.lowercase()
+        
+        // 1. Cloud Whitelist -> 0 Risk
+        if (com.childsafety.os.cloud.CloudPolicySync.isAllowedByCloud(h)) return 0
+        
+        // 2. Cloud Blocklist -> High Risk
+        if (com.childsafety.os.cloud.CloudPolicySync.isBlockedByCloud(h)) return 100
+
+        // 3. Categorization Risk
+        return when {
+            adultDomains.any { h == it || h.endsWith(".$it") } -> 40 // Adult
+            violenceDomains.any { h == it || h.endsWith(".$it") } -> 30 // Violence
+            gamblingDomains.any { h == it || h.endsWith(".$it") } -> 25 // Gambling
+            drugDomains.any { h == it || h.endsWith(".$it") } -> 20 // Illegal/Drugs
+            proxyDomains.any { h == it || h.endsWith(".$it") } -> 15 // Proxy/Evasion
+            datingDomains.any { h == it || h.endsWith(".$it") } -> 15 // Dating
+            socialMediaDomains.any { h == it || h.endsWith(".$it") } -> 10 // Social
+            urlShortenerDomains.any { h == it || h.endsWith(".$it") } -> 10 // Obfuscation
+            else -> 0 // Neutral
+        }
+    }
+
+    /**
+     * Get TrustLevel for Antigravity Engine
+     */
+    fun getTrustLevel(host: String?): com.childsafety.os.policy.TrustLevel {
+        if (host.isNullOrBlank()) return com.childsafety.os.policy.TrustLevel.NEUTRAL
+        
+        val h = host.lowercase()
+        
+        // HIGH TRUST: Edu, Gov, and major trusted search/tech
+        if (h.endsWith(".edu") || h.endsWith(".gov") || 
+            h.contains("wikipedia.org") || h.contains("khanacademy.org") ||
+            h.contains("stackoverflow.com") || h.contains("github.com") ||
+            h.contains("google.com") || h.contains("microsoft.com")) {
+            return com.childsafety.os.policy.TrustLevel.HIGH
+        }
+        
+        // SUSPICIOUS: Proxy, P2P, Shorteners, known bad TLDs
+        if (proxyDomains.any { h.contains(it) } || 
+            urlShortenerDomains.any { h.contains(it) } ||
+            h.endsWith(".xyz") || h.endsWith(".top") || h.endsWith(".info")) {
+            return com.childsafety.os.policy.TrustLevel.SUSPICIOUS
+        }
+        
+        return com.childsafety.os.policy.TrustLevel.NEUTRAL
+    }
+
+    /**
      * Get user-friendly description for a block category
      */
     fun getCategoryDescription(category: BlockCategory): String {

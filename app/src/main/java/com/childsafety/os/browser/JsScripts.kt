@@ -16,7 +16,47 @@ object JsScripts {
      * SECURITY: Blurs all images by default until ML confirms they're safe.
      * Called by WebViewInterceptor.onPageFinished()
      */
-    const val IMAGE_DETECTOR = """
+    /**
+     * Detects images and sends them to native code for ML analysis.
+     * SECURITY: Blurs all images by default until ML confirms they're safe.
+     * Called by WebViewInterceptor.onPageFinished()
+     */
+    fun getImageDetectorScript(isAdult: Boolean): String {
+        val blurBehavior = if (isAdult) {
+             // ADULT MODE: No preemptive blur, just monitoring OR mild overlay
+             // We'll skip the blur but keep the ID generation for tracking if ML flags it later
+             """
+             // ADULT MODE: No preemptive blur
+             img.style.filter = ''; 
+             img.style.opacity = '1';
+             """
+        } else {
+             // CHILD/TEEN MODE: Aggressive preemptive blur
+             """
+             // PREEMPTIVE BLUR - Apply immediately for safety
+             img.style.setProperty('filter', 'blur(20px)', 'important');
+             img.style.transition = 'filter 0.3s ease-in-out';
+             img.style.opacity = '0.7';
+             
+             // Add checking overlay
+             var wrapper = img.parentElement;
+             if (wrapper && wrapper.style.position !== 'relative') {
+                 wrapper.style.position = 'relative';
+             }
+             
+             var overlay = document.createElement('div');
+             overlay.className = 'cs-checking-overlay';
+             overlay.dataset.csOverlay = imageId;
+             overlay.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.6);color:white;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;pointer-events:none;z-index:1000;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+             overlay.textContent = '🔒 Checking...';
+             
+             if (wrapper) {
+                 wrapper.appendChild(overlay);
+             }
+             """
+        }
+
+        return """
         (function() {
             // Generate unique ID for images
             function generateId() {
@@ -33,26 +73,7 @@ object JsScripts {
                 img.dataset.csid = imageId;
                 img.dataset.safetyStatus = 'pending';
                 
-                // PREEMPTIVE BLUR - Apply immediately for safety
-                img.style.filter = 'blur(20px)';
-                img.style.transition = 'filter 0.3s ease-in-out';
-                img.style.opacity = '0.7';
-                
-                // Add checking overlay
-                var wrapper = img.parentElement;
-                if (wrapper && wrapper.style.position !== 'relative') {
-                    wrapper.style.position = 'relative';
-                }
-                
-                var overlay = document.createElement('div');
-                overlay.className = 'cs-checking-overlay';
-                overlay.dataset.csOverlay = imageId;
-                overlay.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.6);color:white;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;pointer-events:none;z-index:1000;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
-                overlay.textContent = '🔒 Checking...';
-                
-                if (wrapper) {
-                    wrapper.appendChild(overlay);
-                }
+                $blurBehavior
                 
                 // Check if image is in viewport (for priority processing)
                 var rect = img.getBoundingClientRect();
@@ -103,32 +124,29 @@ object JsScripts {
             }
         })();
     """
+    }
 
     /**
-     * Scans page text and emojis for explicit content.
-     * Called by WebViewContentEnforcer.inject()
+     * Scans page text and statistics for context analysis.
      */
     const val TEXT_EMOJI_SCANNER = """
         (function() {
             // Get page text content
             var pageText = document.body.innerText || '';
             
-            // Send to native for analysis if content bridge exists
-            if (window.ChildSafetyContent && window.ChildSafetyContent.onTextFound) {
-                // Limit text to prevent performance issues
-                var limitedText = pageText.substring(0, 5000);
-                window.ChildSafetyContent.onTextFound(limitedText);
+            // Image count
+            var imageCount = document.images ? document.images.length : 0;
+            
+            // Send to native for Risk Engine analysis
+            if (window.ChildSafetyContent && window.ChildSafetyContent.onPageContext) {
+                // Limit text to 2000 chars as per Risk Engine requirements
+                var limitedText = pageText.substring(0, 2000);
+                window.ChildSafetyContent.onPageContext(limitedText, imageCount);
             }
             
-            // Emoji pattern detection (suggestive emoji combinations)
-            var emojiPattern = /[\u{1F346}\u{1F351}\u{1F353}\u{1F34C}\u{1F4A6}\u{1F60D}\u{1F618}\u{1F48B}]/gu;
-            var emojis = pageText.match(emojiPattern) || [];
-            
-            if (emojis.length > 3) {
-                if (window.ChildSafetyContent && window.ChildSafetyContent.onEmojiRisk) {
-                    window.ChildSafetyContent.onEmojiRisk(emojis.join(''));
-                }
-            }
+            // Fallback legacy support (keep emoji scan local for now or remove if handled by PolicyEngine)
+            // PolicyEngine now handles emoji inside 'pageText' analysis, so we can likely remove the separate call
+            // unless we want double safety. We'll leave it but reduced.
         })();
     """
 

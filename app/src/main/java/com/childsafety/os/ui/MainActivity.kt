@@ -240,6 +240,11 @@ class MainActivity : ComponentActivity() {
                                                 Toast.makeText(this@MainActivity, "Age mode changed to: ${newAge.name}", Toast.LENGTH_SHORT).show()
                                                 // Log to Firebase
                                                 com.childsafety.os.cloud.FirebaseManager.logAgeModeChange(newAge.name)
+                                                
+                                                // Update VPN if running
+                                                if (vpnEnabled) {
+                                                    startVpnService()
+                                                }
                                             }
                                         }
                                     }
@@ -318,6 +323,7 @@ class MainActivity : ComponentActivity() {
     private fun startVpnService() {
         val intent = Intent(this, SafeVpnService::class.java).apply {
             action = SafeVpnService.ACTION_START
+            putExtra("age_group", selectedAgeGroup.name)
         }
         startService(intent)
         vpnEnabled = true

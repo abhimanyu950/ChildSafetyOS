@@ -107,6 +107,22 @@ object EventUploader {
         Log.i(TAG, "SAFE_BROWSER_BLOCK device=$deviceId url=$url reason=$reason")
     }
 
+    /**
+     * Log structured Risk Engine decision.
+     * Expects a JSON string which is stored as payload.
+     */
+    fun logRiskEvent(jsonPayload: String) {
+        // Convert JSON string to Map if possible, or store as string
+        // For simplicity we store as string in a field called "riskData"
+        val event = mutableMapOf<String, Any>(
+            "type" to "RISK_ENGINE_DECISION",
+            "source" to "android",
+            "timestamp" to Date(),
+            "payload" to mapOf("riskData" to jsonPayload)
+        )
+        uploadEvent(event)
+    }
+
     private fun uploadEvent(event: Map<String, Any>) {
         try {
             firestore?.collection(COLLECTION_EVENTS)

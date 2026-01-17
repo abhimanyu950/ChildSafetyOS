@@ -36,6 +36,7 @@ class SafeBrowserActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var currentAgeGroup: AgeGroup = AgeGroup.CHILD
+    private val contentBridge = JsContentBridge()
 
     companion object {
         private const val TAG = "SafeBrowserActivity"
@@ -150,11 +151,23 @@ class SafeBrowserActivity : AppCompatActivity() {
 
             // Add JavaScript bridge for image interception
             addJavascriptInterface(JsBridge(context), "ChildSafety")
+            
+            // Add Content Bridge for Text/Context analysis
+            contentBridge.setListener(object : JsContentBridge.Listener {
+                override fun onPageContext(text: String, imageCount: Int) {
+                    processPageContext(text, imageCount)
+                }
+                override fun onExplicitTextDetected() {
+                    // Legacy callback, safely ignored or handled same way
+                    processPageContext("", 0) 
+                }
+            })
+            addJavascriptInterface(contentBridge, "ChildSafetyContent")
 
             // Set WebViewClient for URL interception
             webViewClient = SafeWebViewClient()
 
-            // Set WebChromeClient for console logging
+            // Set WebChromeClient for console logging and popup blocking
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                     consoleMessage?.let {
@@ -162,6 +175,24 @@ class SafeBrowserActivity : AppCompatActivity() {
                     }
                     return true
                 }
+                
+                // BLOCK POPUPS / NEW TABS
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: android.os.Message?
+                ): Boolean {
+                    Log.w(TAG, "Blocked popup/new window attempt")
+                    android.widget.Toast.makeText(context, "Popups are blocked for safety", android.widget.Toast.LENGTH_SHORT).show()
+                    return false // Prevent new window
+                }
+            }
+            
+            // BLOCK DOWNLOADS
+            setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
+                Log.w(TAG, "Blocked download attempt: $url")
+                android.widget.Toast.makeText(context, "Downloads are blocked across all modes", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -462,81 +493,8 @@ class SafeBrowserActivity : AppCompatActivity() {
             }
         }
         
-        // Inject enhanced image scanner with preemptive blur
-        val js = """
-            (function() {
-                // Generate unique ID for images
-                function generateId() {
-                    return 'cs_' + Math.random().toString(36).substr(2, 9);
-                }
-                
-                // Process an image element
-                function processImage(img) {
-                    if (img.dataset.csid) return; // Already processed
-                    if (!img.src || img.src.startsWith('data:')) return; // Skip data URIs
-                    if (img.width < 50 || img.height < 50) return; // Skip tiny images
-                    
-                    var imageId = generateId();
-                    img.dataset.csid = imageId;
-                    img.dataset.safetyStatus = 'pending';
-                    
-                    // *** PREEMPTIVE BLUR - Applied immediately for safety ***
-                    img.style.setProperty('filter', 'blur(20px)', 'important');
-                    img.style.transition = 'filter 0.3s ease-in-out';
-                    img.style.opacity = '0.7';
-                    
-                    // Create checking overlay
-                    var wrapper = img.parentElement;
-                    if (wrapper && wrapper.style.position !== 'relative') {
-                        wrapper.style.position = 'relative';
-                    }
-                    
-                    var overlay = document.createElement('div');
-                    overlay.className = 'cs-checking-overlay';
-                    overlay.dataset.csOverlay = imageId;
-                    overlay.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.7);color:white;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;pointer-events:none;z-index:1000;white-space:nowrap;';
-                    overlay.textContent = '🔒 Checking...';
-                    
-                    if (wrapper) {
-                        wrapper.appendChild(overlay);
-                    }
-                    
-                    // Send to native for ML analysis
-                    if (window.ChildSafety && window.ChildSafety.onImageFound) {
-                        window.ChildSafety.onImageFound(imageId, img.src);
-                    }
-                }
-                
-                // Process all existing images
-                document.querySelectorAll('img').forEach(processImage);
-                
-                // Observe new images (for lazy loading and infinite scroll)
-                var observer = new MutationObserver(function(mutations) {
-                    mutations.forEach(function(mutation) {
-                        mutation.addedNodes.forEach(function(node) {
-                            if (node.nodeName === 'IMG') {
-                                processImage(node);
-                            } else if (node.querySelectorAll) {
-                                node.querySelectorAll('img').forEach(processImage);
-                            }
-                        });
-                    });
-                });
-                
-                if (document.body) {
-                    observer.observe(document.body, {
-                        childList: true,
-                        subtree: true
-                    });
-                }
-                
-                // Re-scan periodically for images loaded via JS (Google Images uses this)
-                setInterval(function() {
-                    document.querySelectorAll('img:not([data-csid])').forEach(processImage);
-                }, 1000);
-            })();
-        """.trimIndent()
-
+        // Use new mode-aware script
+        val js = JsScripts.getImageDetectorScript(currentAgeGroup == AgeGroup.ADULT)
         webView?.evaluateJavascript(js, null)
     }
 
@@ -546,76 +504,48 @@ class SafeBrowserActivity : AppCompatActivity() {
     private fun analyzePageText(webView: WebView?, url: String?) {
         // Skip text analysis for trusted domains
         val host = url?.let { android.net.Uri.parse(it).host } ?: return
-        val trustedDomains = listOf(
-            "google.com", "www.google.com", "google.co.in",
-            "youtube.com", "www.youtube.com",
-            "wikipedia.org", "en.wikipedia.org",
-            "bing.com", "www.bing.com",
-            "duckduckgo.com"
-        )
         
-        if (trustedDomains.any { host.contains(it) }) {
-            Log.d(TAG, "Skipping text analysis for trusted domain: $host")
-            return
-        }
+        // Execute the updated scanner script
+        // This will trigger contentBridge.onPageContext()
+        webView?.evaluateJavascript(JsScripts.TEXT_EMOJI_SCANNER, null)
+    }
 
-        // Text/emoji analysis enabled safely on background thread
+    private fun processPageContext(text: String, imageCount: Int) {
+        val currentUrl = webView.url ?: return
         
-        val js = """
-            (function() {
-                var text = document.body.innerText || '';
-                return text.substring(0, 5000); // Limit text length
-            })();
-        """.trimIndent()
-
-        webView?.evaluateJavascript(js) { result ->
-            val pageText = result?.removeSurrounding("\"") ?: return@evaluateJavascript
-            
-            lifecycleScope.launch(Dispatchers.Default) {
-                // Check text for explicit content
-                val isTextRisky = com.childsafety.os.ai.TextRiskClassifier.isRisky(
-                    this@SafeBrowserActivity, 
-                    pageText, 
-                    currentAgeGroup
-                )
-                
-                if (isTextRisky) {
-                   withContext(Dispatchers.Main) {
-                       Log.w(TAG, "Page text blocked: $url")
-                       val blockedHtml = BlockedPageHtml.blockedTextPage()
-                       webView.loadDataWithBaseURL(null, blockedHtml, "text/html", "UTF-8", null)
-                       
-                       com.childsafety.os.cloud.FirebaseManager.logUrlBlock(
-                           url = url ?: "",
-                           domain = getDomain(url ?: ""),
-                           reason = "EXPLICIT_TEXT",
-                           blockType = com.childsafety.os.cloud.models.BlockType.KEYWORD,
-                           browserType = com.childsafety.os.cloud.models.BrowserType.SAFE_BROWSER
-                       )
-                   }
-                   return@launch
-                }
-                
-                // Check emojis
-                // Using simple heuristic - if text wasn't risky, check emoji specific
-                val isEmojiRisky = com.childsafety.os.ai.EmojiDetector.containsRiskyEmoji(pageText)
-                if (isEmojiRisky) {
-                    withContext(Dispatchers.Main) {
-                        Log.w(TAG, "Page emoji blocked: $url")
-                        
-                        val blockedHtml = BlockedPageHtml.blockedTextPage()
-                        webView.loadDataWithBaseURL(null, blockedHtml, "text/html", "UTF-8", null)
-                        
-                        com.childsafety.os.cloud.FirebaseManager.logUrlBlock(
-                           url = url ?: "",
-                           domain = getDomain(url ?: ""),
-                           reason = "EXPLICIT_EMOJI",
-                           blockType = com.childsafety.os.cloud.models.BlockType.KEYWORD,
-                           browserType = com.childsafety.os.cloud.models.BrowserType.SAFE_BROWSER
-                       )
-                    }
-                }
-            }
+        lifecycleScope.launch(Dispatchers.Default) {
+             // Use the Unified Policy Engine
+             val result = com.childsafety.os.policy.PolicyEngine.evaluatePageRisk(
+                 context = this@SafeBrowserActivity,
+                 url = currentUrl,
+                 pageText = text,
+                 aiScore = 0, // AI runs parallel/later via ImageMlQueue
+                 ageGroup = currentAgeGroup
+             )
+             
+             withContext(Dispatchers.Main) {
+                 if (result.action == com.childsafety.os.policy.RiskAction.BLOCK_HARD) {
+                     Log.w(TAG, "🚫 PAGE BLOCKED by Risk Engine (R=${result.finalScore}): ${result.reason}")
+                     
+                     // Show block page
+                     val blockedHtml = BlockedPageHtml.blockedTextPage()
+                     webView.loadDataWithBaseURL(null, blockedHtml, "text/html", "UTF-8", null)
+                     
+                     // Log
+                     com.childsafety.os.cloud.FirebaseManager.logUrlBlock(
+                         url = currentUrl,
+                         domain = getDomain(currentUrl),
+                         reason = "Risk: ${result.reason}",
+                         blockType = com.childsafety.os.cloud.models.BlockType.KEYWORD,
+                         browserType = com.childsafety.os.cloud.models.BrowserType.SAFE_BROWSER
+                     )
+                     
+                 } else if (result.action == com.childsafety.os.policy.RiskAction.WARN) {
+                     // TODO: Implement Warn Overlay
+                     Log.i(TAG, "⚠️ WARN: High risk content (R=${result.finalScore})")
+                     android.widget.Toast.makeText(this@SafeBrowserActivity, "Warning: Sensitive Content Detected", android.widget.Toast.LENGTH_LONG).show()
+                 }
+             }
         }
     }
 
