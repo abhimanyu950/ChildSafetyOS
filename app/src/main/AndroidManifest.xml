@@ -14,6 +14,8 @@
     <application
         android:name=".ChildSafetyApp"
         android:allowBackup="false"
+        android:icon="@drawable/ic_launcher_playstore"
+        android:roundIcon="@drawable/ic_launcher_playstore"
         android:label="ChildSafetyOS"
         android:theme="@style/Theme.ChildSafetyOS"
         android:usesCleartextTraffic="true"

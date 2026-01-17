@@ -171,8 +171,16 @@ class SafeBrowserActivity : AppCompatActivity() {
         
         Log.w(TAG, "Blocking content: $host ($category)")
 
+        // FIX: Don't show search engine domains as the 'blocked source'
+        // This prevents confusion (e.g. "www.google.com" appearing in red when searching for blocked terms)
+        val displayDomain = if (isSearchEngineDomain(host)) {
+             "Unsafe Search Content"
+        } else {
+             host
+        }
+
         // Show blocked page
-        val blockedHtml = BlockedPageHtml.forCategory(category, host)
+        val blockedHtml = BlockedPageHtml.forCategory(category, displayDomain)
         view?.loadDataWithBaseURL(
             null,
             blockedHtml,
@@ -200,6 +208,15 @@ class SafeBrowserActivity : AppCompatActivity() {
         }
     }
 
+    private fun isSearchEngineDomain(host: String): Boolean {
+        val lowerHost = host.lowercase()
+        return lowerHost.contains("google.") || 
+               lowerHost.contains("bing.") || 
+               lowerHost.contains("yahoo.") || 
+               lowerHost.contains("duckduckgo.") ||
+               lowerHost.contains("search.")
+    }
+
     /**
      * Custom WebViewClient for URL filtering with comprehensive error handling.
      */
@@ -221,9 +238,7 @@ class SafeBrowserActivity : AppCompatActivity() {
                     return true
                 }
 
-                // 2. Check search queries for specific explicit keywords
-                // This handles cases where Image ML is disabled (Google/Bing) but we need to block bad searches
-                // "pornhub", "sex", "xxx", etc. in the URL query string
+                // 2. Check search queries for explicit keywords (MOVED UP)
                 val isSearchEngine = host.contains("google.") || 
                                      host.contains("bing.") || 
                                      host.contains("yahoo.") || 
@@ -231,12 +246,22 @@ class SafeBrowserActivity : AppCompatActivity() {
                                      host.contains("search.")
 
                 if (isSearchEngine) {
-                    // Extract search query from URL
-                    // Common params: q= (Google/Bing), p= (Yahoo), query=, text=
+                    // IMPORTANT: Never block the homepage (empty query / back button navigation)
+                    val isHomepage = listOf(
+                        "www.google.com", "google.com", "www.google.co.in", "google.co.in",
+                        "www.bing.com", "bing.com",
+                        "www.duckduckgo.com", "duckduckgo.com",
+                        "www.yahoo.com", "yahoo.com"
+                    ).any { url.startsWith("https://$it/") && !url.contains("?q=") && !url.contains("&q=") }
+                    
+                    if (isHomepage) {
+                        Log.d(TAG, "Allowing search engine homepage: $url")
+                        return false
+                    }
+                    
                     val queryParams = listOf("q", "p", "query", "text", "search_query")
                     var searchQuery = ""
                     
-                    // Parse URL params manually or via Uri
                     try {
                         val uri = android.net.Uri.parse(url)
                         for (param in queryParams) {
@@ -247,28 +272,64 @@ class SafeBrowserActivity : AppCompatActivity() {
                             }
                         }
                     } catch (e: Exception) {
-                        // Fallback regex if URI parsing fails
+                        // Fallback if URI parsing fails
                     }
 
                     if (searchQuery.isNotBlank()) {
-                        // Use advanced Context-Aware Text Classifier ASYNC
-                        val decodingQuery = java.net.URLDecoder.decode(searchQuery, "UTF-8")
+                        val decodedQuery = try {
+                            java.net.URLDecoder.decode(searchQuery, "UTF-8")
+                        } catch (e: Exception) {
+                            searchQuery
+                        }
                         
-                        // Launch in background to prevent UI freeze
+                        // === SYNCHRONOUS PRE-CHECK: Block CSAM and explicit terms IMMEDIATELY ===
+                        // This prevents any content from loading for the most dangerous terms
+                        if (com.childsafety.os.ai.KeywordRepository.containsAlwaysBlock(decodedQuery)) {
+                            Log.w(TAG, "BLOCKED IMMEDIATELY: Always-block keyword in query")
+                            blockNavigation(view, url, host, DomainPolicy.BlockCategory.EXPLICIT_TEXT)
+                            return true
+                        }
+                        
+                        // Synchronous high-risk keyword check (fast, rule-based)
+                        val quickRiskScore = com.childsafety.os.ai.KeywordRepository.getRiskScore(decodedQuery)
+                        if (quickRiskScore >= 0.6f && currentAgeGroup == AgeGroup.CHILD) {
+                            Log.w(TAG, "BLOCKED (sync): High-risk keywords in query (score=$quickRiskScore)")
+                            blockNavigation(view, url, host, DomainPolicy.BlockCategory.EXPLICIT_TEXT)
+                            
+                            // Log to Firebase
+                            com.childsafety.os.cloud.FirebaseManager.logSearchBlock(
+                                searchQuery = decodedQuery,
+                                url = url,
+                                domain = host,
+                                reason = "High-risk keywords detected (quick check)"
+                            )
+                            return true
+                        }
+                        
+                        // === ASYNC ML ANALYSIS for nuanced detection ===
+                        // This catches context-dependent cases the quick check might miss
+                        val originalUrl = url // Capture for comparison after async
                         lifecycleScope.launch(Dispatchers.Default) {
                             val classification = com.childsafety.os.ai.TextRiskClassifier.classify(
                                 this@SafeBrowserActivity, 
-                                decodingQuery, 
+                                decodedQuery, 
                                 currentAgeGroup
                             )
 
                             withContext(Dispatchers.Main) {
+                                // SAFETY CHECK: Only block if we're still on the same page
+                                // This prevents blocking after user pressed back button
+                                val currentWebUrl = webView.url ?: ""
+                                if (!currentWebUrl.contains(decodedQuery.take(10))) {
+                                    Log.d(TAG, "Skipping async block - page changed from $originalUrl to $currentWebUrl")
+                                    return@withContext
+                                }
+                                
                                 if (classification.isRisky) {
-                                    Log.w(TAG, "Search query blocked: '$decodingQuery' (Confidence: ${classification.confidence})")
+                                    Log.w(TAG, "Search query blocked (async): '$decodedQuery' (Confidence: ${classification.confidence})")
                                     
-                                    // Log to Firebase with search analytics
                                     com.childsafety.os.cloud.FirebaseManager.logSearchBlock(
-                                        searchQuery = decodingQuery,
+                                        searchQuery = decodedQuery,
                                         url = url,
                                         domain = host,
                                         reason = classification.contextOverride ?: "Explicit content detected"
@@ -276,15 +337,23 @@ class SafeBrowserActivity : AppCompatActivity() {
                                     
                                     blockNavigation(view, url, host, DomainPolicy.BlockCategory.EXPLICIT_TEXT)
                                 } else {
-                                    Log.i(TAG, "Search query allowed: '$decodingQuery' (Context: ${classification.contextOverride ?: "None"})")
+                                    Log.i(TAG, "Search query allowed: '$decodedQuery' (Context: ${classification.contextOverride ?: "None"})")
                                 }
                             }
                         }
                     }
                 }
 
-                // 3. Enforce SafeSearch parameters (Strict Mode)
-                // This forces the search engine to filter explicit content at the source
+                // 3. NEW: Check URL path for explicit content (Reddit NSFW, etc.)
+                // MOVED AFTER SEARCH LOGIC to prevent flagging search URLs as generic path blocks
+                val pathAnalysis = com.childsafety.os.policy.UrlPathAnalyzer.analyze(url)
+                if (pathAnalysis.isExplicit) {
+                    Log.w(TAG, "URL path blocked: ${pathAnalysis.matchedPattern}")
+                    blockNavigation(view, url, host, DomainPolicy.BlockCategory.ADULT)
+                    return true
+                }
+
+                // 4. Enforce SafeSearch parameters (Strict Mode)
                 val safeUrl = enforceSafeSearch(url, host)
                 if (safeUrl != url) {
                     Log.i(TAG, "Enforcing SafeSearch: $safeUrl")
@@ -350,11 +419,42 @@ class SafeBrowserActivity : AppCompatActivity() {
 
     /**
      * Inject JavaScript to scan and track images.
+     * CRITICAL: Images are blurred immediately until ML confirms they're safe.
      */
     private fun injectImageScanner(webView: WebView?) {
-        // We now enable scanning EVERYWHERE, including search engines.
-        // Rate limiting is handled in ImageMlQueue to prevent bot detection.
+        // Check if we're on Google Images with a potentially risky query
+        val currentUrl = webView?.url ?: ""
         
+        // Block image tab for suggestive/risky queries immediately
+        if (currentUrl.contains("tbm=isch") || currentUrl.contains("/images?")) {
+            val uri = android.net.Uri.parse(currentUrl)
+            val query = uri.getQueryParameter("q")?.lowercase() ?: ""
+            
+            // Suggestive queries that should block image tab completely for CHILD mode
+            val riskyImageQueries = listOf(
+                "hot", "hot girls", "hot girl", "sexy", "sexy girl",
+                "bikini", "bikini girl", "swimsuit model",
+                "bra", "bras", "lingerie", "underwear model",
+                "actress hot", "celebrity hot", "model pic",
+                "strip", "topless", "shirtless girl"
+            )
+            
+            if (currentAgeGroup == AgeGroup.CHILD && riskyImageQueries.any { query.contains(it) }) {
+                Log.w(TAG, "🚫 BLOCKING risky image search in CHILD mode: $query")
+                val blockedHtml = BlockedPageHtml.forCategory(DomainPolicy.BlockCategory.EXPLICIT_IMAGE, "images.google.com")
+                webView?.loadDataWithBaseURL(null, blockedHtml, "text/html", "UTF-8", null) ?: return
+                
+                com.childsafety.os.cloud.FirebaseManager.logSearchBlock(
+                    searchQuery = query,
+                    url = currentUrl,
+                    domain = "images.google.com",
+                    reason = "Risky image search blocked for child safety"
+                )
+                return
+            }
+        }
+        
+        // Inject enhanced image scanner with preemptive blur
         val js = """
             (function() {
                 // Generate unique ID for images
@@ -370,6 +470,28 @@ class SafeBrowserActivity : AppCompatActivity() {
                     
                     var imageId = generateId();
                     img.dataset.csid = imageId;
+                    img.dataset.safetyStatus = 'pending';
+                    
+                    // *** PREEMPTIVE BLUR - Applied immediately for safety ***
+                    img.style.filter = 'blur(20px)';
+                    img.style.transition = 'filter 0.3s ease-in-out';
+                    img.style.opacity = '0.7';
+                    
+                    // Create checking overlay
+                    var wrapper = img.parentElement;
+                    if (wrapper && wrapper.style.position !== 'relative') {
+                        wrapper.style.position = 'relative';
+                    }
+                    
+                    var overlay = document.createElement('div');
+                    overlay.className = 'cs-checking-overlay';
+                    overlay.dataset.csOverlay = imageId;
+                    overlay.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.7);color:white;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;pointer-events:none;z-index:1000;white-space:nowrap;';
+                    overlay.textContent = '🔒 Checking...';
+                    
+                    if (wrapper) {
+                        wrapper.appendChild(overlay);
+                    }
                     
                     // Send to native for ML analysis
                     if (window.ChildSafety && window.ChildSafety.onImageFound) {
@@ -380,7 +502,7 @@ class SafeBrowserActivity : AppCompatActivity() {
                 // Process all existing images
                 document.querySelectorAll('img').forEach(processImage);
                 
-                // Observe new images
+                // Observe new images (for lazy loading and infinite scroll)
                 var observer = new MutationObserver(function(mutations) {
                     mutations.forEach(function(mutation) {
                         mutation.addedNodes.forEach(function(node) {
@@ -399,6 +521,11 @@ class SafeBrowserActivity : AppCompatActivity() {
                         subtree: true
                     });
                 }
+                
+                // Re-scan periodically for images loaded via JS (Google Images uses this)
+                setInterval(function() {
+                    document.querySelectorAll('img:not([data-csid])').forEach(processImage);
+                }, 1000);
             })();
         """.trimIndent()
 

@@ -314,6 +314,17 @@ function updateChartsData(stats) {
     } else {
         reasonsChart.innerHTML = '<p class="no-data">No blocks yet</p>';
     }
+
+    // App Usage Chart
+    const usageChart = document.getElementById('usageChart');
+    if (stats.appUsage && Object.keys(stats.appUsage).length > 0) {
+        const sorted = Object.entries(stats.appUsage)
+            .sort((a, b) => b[1] - a[1]) // Sort by duration desc
+            .slice(0, 10); // Limit to top 10
+        usageChart.innerHTML = renderUsageChart(sorted);
+    } else {
+        usageChart.innerHTML = '<p class="no-data">No usage data yet</p>';
+    }
 }
 
 function renderBarChart(data) {
@@ -327,6 +338,29 @@ function renderBarChart(data) {
                 <div class="chart-label" title="${displayLabel}">${displayLabel}</div>
                 <div class="chart-bar-fill" style="width: ${percentage}%">
                     <span class="chart-value">${value}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderUsageChart(data) {
+    const maxValue = Math.max(...data.map(d => d[1]));
+    return data.map(([label, value]) => {
+        // Pretty name logic could go here
+        const displayLabel = label.split('.').pop(); // Simple package name
+        const percentage = (value / maxValue) * 100;
+
+        // Format time (e.g. 90 -> 1h 30m)
+        const hrs = Math.floor(value / 60);
+        const mins = value % 60;
+        const timeStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+
+        return `
+            <div class="chart-bar">
+                <div class="chart-label" title="${label}">${displayLabel}</div>
+                <div class="chart-bar-fill" style="width: ${percentage}%">
+                    <span class="chart-value">${timeStr}</span>
                 </div>
             </div>
         `;

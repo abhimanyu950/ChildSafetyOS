@@ -28,14 +28,61 @@ object BlockedAppsConfig {
         "com.android.vending",            // Play Store
         "com.google.android.packageinstaller", // Package installer
         "com.android.packageinstaller",   // Package installer (alternate)
+        
         // === BROWSERS - Block to prevent filter bypass ===
         "com.android.chrome",             // Chrome
         "org.mozilla.firefox",            // Firefox
+        "org.mozilla.firefox_beta",       // Firefox Beta
+        "org.mozilla.fenix",              // Firefox Nightly
         "com.opera.browser",              // Opera
+        "com.opera.mini.native",          // Opera Mini
         "com.brave.browser",              // Brave
         "com.microsoft.emmx",             // Edge
         "com.UCMobile.intl",              // UC Browser
-        "com.duckduckgo.mobile.android"   // DuckDuckGo
+        "com.duckduckgo.mobile.android",  // DuckDuckGo
+        "com.kiwibrowser.browser",        // Kiwi Browser
+        "org.chromium.chrome",            // Chromium
+        "com.yandex.browser",             // Yandex Browser
+        "com.sec.android.app.sbrowser",   // Samsung Internet
+        "com.mi.globalbrowser",           // Mi Browser
+        "com.huawei.browser",             // Huawei Browser
+        "mark.via",                       // Via Browser
+        "acr.browser.lightning",          // Lightning Browser
+        
+        // === VPN APPS - Block to prevent bypass ===
+        "com.nordvpn.android",            // NordVPN
+        "com.expressvpn.vpn",             // ExpressVPN
+        "com.surfshark.vpnclient.android", // Surfshark
+        "com.cyberghostvpn.android",      // CyberGhost
+        "com.privateinternetaccess.android", // PIA
+        "ch.protonvpn.android",           // ProtonVPN
+        "net.mullvad.mullvadvpn",         // Mullvad
+        "com.windscribe.vpn",             // Windscribe
+        "com.tunnelbear.android",         // TunnelBear
+        "hotspotshield.android.vpn",      // Hotspot Shield
+        "com.ipvanish.android",           // IPVanish
+        "com.purevpn.androidvpn",         // PureVPN
+        "com.vyprvpn.android",            // VyprVPN
+        "com.freevpn.unblock.proxy",      // Free VPN apps
+        "com.fast.free.unblock.vpn.proxy", // Fast VPN
+        "free.vpn.unblock.proxy.turbovpn", // Turbo VPN
+        "com.speedvpn.free.vpn",          // Speed VPN
+        "com.secure.vpn.free.proxy.master", // VPN Master
+        "com.supervpn.android",           // SuperVPN
+        "com.thunder.vpn.android",        // Thunder VPN
+        
+        // === TOR & ONION BROWSERS ===
+        "org.torproject.torbrowser",      // Tor Browser
+        "org.torproject.android",         // Orbot (Tor proxy)
+        "com.nicevpn.topfreevpn",         // Onion Browser
+        "info.nicevpn.nicevpn",           // Free Tor VPN
+        "browser.nicevpn.nicevpn",        // Tor VPN Browser
+        
+        // === PROXY APPS ===
+        "ca.psiphon.ploggy",              // Psiphon
+        "org.nicevpn.nicevpn",            // Lantern
+        "cloudveil.dns.doh.proxy",        // DNS proxy apps
+        "com.appspot.nicevpn"             // Other proxy apps
     )
 
     /**
@@ -43,13 +90,22 @@ object BlockedAppsConfig {
      */
     private val socialMediaApps = mapOf(
         "com.instagram.android" to "Instagram",
+        "com.instagram.lite" to "Instagram Lite",
         "com.zhiliaoapp.musically" to "TikTok",
         "com.ss.android.ugc.trill" to "TikTok (Lite)",
         "com.snapchat.android" to "Snapchat",
         "com.twitter.android" to "Twitter/X",
+        "com.twitter.android.lite" to "Twitter Lite",
         "com.facebook.katana" to "Facebook",
+        "com.facebook.lite" to "Facebook Lite",
         "com.facebook.orca" to "Messenger",
-        "com.whatsapp" to "WhatsApp"
+        "com.facebook.mlite" to "Messenger Lite",
+        "com.whatsapp" to "WhatsApp",
+        "com.whatsapp.w4b" to "WhatsApp Business",
+        "com.discord" to "Discord",
+        "tv.twitch.android.app" to "Twitch",
+        "com.pinterest" to "Pinterest",
+        "com.tumblr" to "Tumblr"
     )
 
     /**
@@ -58,9 +114,17 @@ object BlockedAppsConfig {
     private val gamingApps = mapOf(
         "com.supercell.clashofclans" to "Clash of Clans",
         "com.supercell.clashroyale" to "Clash Royale",
+        "com.supercell.brawlstars" to "Brawl Stars",
         "com.mojang.minecraftpe" to "Minecraft",
         "com.kiloo.subwaysurf" to "Subway Surfers",
-        "com.imangi.templerun2" to "Temple Run 2"
+        "com.imangi.templerun2" to "Temple Run 2",
+        "com.king.candycrushsaga" to "Candy Crush",
+        "com.pubg.imobile" to "PUBG Mobile",
+        "com.activision.callofduty.shooter" to "Call of Duty Mobile",
+        "com.garena.game.freefire" to "Free Fire",
+        "com.dts.freefireth" to "Free Fire (TH)",
+        "com.epicgames.fortnite" to "Fortnite",
+        "com.roblox.client" to "Roblox"
     )
 
     /**
@@ -70,15 +134,32 @@ object BlockedAppsConfig {
         "com.tinder" to "Tinder",
         "com.bumble.app" to "Bumble",
         "com.badoo.mobile" to "Badoo",
-        "com.hinge.app" to "Hinge"
+        "com.hinge.app" to "Hinge",
+        "com.okcupid.okcupid" to "OkCupid",
+        "com.match.android.matchmobile" to "Match",
+        "com.pof.android" to "Plenty of Fish",
+        "com.zoosk.zoosk" to "Zoosk",
+        "com.grindr.android" to "Grindr",
+        "com.scruff.app" to "Scruff",
+        "com.coffee.meetsbagel" to "Coffee Meets Bagel"
     )
 
     /**
      * Adult/Explicit apps - ALWAYS blocked
+     * Includes anonymous chat apps which can be used for predatory behavior
      */
     private val adultApps = mapOf(
         "com.reddit.frontpage" to "Reddit",
-        "com.tumblr" to "Tumblr"
+        // Anonymous chat apps (high risk for child safety)
+        "com.leapfrog.omegle" to "Omegle",
+        "com.omegle.videochat" to "Omegle Video",
+        "com.chatroulette.android" to "Chatroulette",
+        "gg.monkey.app" to "Monkey",
+        "com.holla.android" to "Holla",
+        "video.chat.yubo" to "Yubo",
+        "com.whisper" to "Whisper",
+        "com.kik.chat" to "Kik Messenger",
+        "com.yikyak.android" to "YikYak"
     )
 
     /**

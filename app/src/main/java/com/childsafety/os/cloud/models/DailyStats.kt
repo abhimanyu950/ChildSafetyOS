@@ -33,6 +33,9 @@ data class DailyStats(
     val totalBrowsingMinutes: Int = 0,
     val totalAppsUsed: List<String> = emptyList(),
     
+    // Usage Stats (PackageName -> Minutes)
+    val appUsage: Map<String, Long> = emptyMap(),
+    
     @ServerTimestamp
     val updatedAt: Timestamp? = null
 ) {

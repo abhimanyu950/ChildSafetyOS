@@ -21,6 +21,7 @@ object FirebaseManager {
     private var initialized = false
     private lateinit var db: FirebaseFirestore
     private lateinit var deviceId: String
+    private lateinit var applicationContext: Context
 
     fun init(context: Context) {
         if (initialized) return
@@ -40,6 +41,8 @@ object FirebaseManager {
             
             // Initialize device status
             initDeviceStatus(context)
+            
+            applicationContext = context.applicationContext
             
             initialized = true
             Log.i(TAG, "Firebase initialized successfully with deviceId: $deviceId")
@@ -88,6 +91,23 @@ object FirebaseManager {
         vpnEnabled?.let { updates["vpnEnabled"] = it }
         adminEnabled?.let { updates["adminProtectionEnabled"] = it }
         settingsLockEnabled?.let { updates["settingsLockEnabled"] = it }
+        
+        // SYNC USAGE STATS (On Heartbeat/Status Update)
+        try {
+            if (::applicationContext.isInitialized && com.childsafety.os.manager.UsageManager.hasPermission(applicationContext)) {
+                 val usageMap = com.childsafety.os.manager.UsageManager.getTodayUsage(applicationContext)
+                 if (usageMap.isNotEmpty()) {
+                     // We update the daily_stats document, not the device document for usage
+                     // But we can spawn a coroutine or just do it here
+                     val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                     db.collection("devices").document(deviceId)
+                         .collection("daily_stats").document(today)
+                         .set(mapOf("appUsage" to usageMap), SetOptions.merge())
+                 }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to sync usage stats on heartbeat", e)
+        }
         
         db.collection("devices")
             .document(deviceId)
@@ -417,6 +437,18 @@ object FirebaseManager {
             "updatedAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
         )
         
+        // SYNC USAGE STATS (Best effort)
+        try {
+            if (::applicationContext.isInitialized && com.childsafety.os.manager.UsageManager.hasPermission(applicationContext)) {
+                 val usageMap = com.childsafety.os.manager.UsageManager.getTodayUsage(applicationContext)
+                 if (usageMap.isNotEmpty()) {
+                     updates["appUsage"] = usageMap
+                 }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to sync usage stats", e)
+        }
+        
         // Increment block counters
         if (event.category == EventCategory.CONTENT_FILTER || event.category == EventCategory.ACCESS_CONTROL) {
             updates["totalBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
@@ -439,17 +471,25 @@ object FirebaseManager {
                 Severity.LOW -> updates["lowBlocks"] = com.google.firebase.firestore.FieldValue.increment(1)
             }
             
-            // Update top blocked domains (if domain exists)
-            event.domain?.let { domain ->
-                // Sanitize domain (replace . with _) to prevent Firestore nested map interpretation
-                val safeDomain = domain.replace(".", "_")
-                updates["topBlockedDomains.$safeDomain"] = com.google.firebase.firestore.FieldValue.increment(1)
+            // Update top blocked domains
+            // IMPROVEMENT: For SEARCH_BLOCKED, show the query ("porn.com") instead of "google.com"
+            val displayKey = if (event.eventType == EventType.SEARCH_BLOCKED && !event.searchQuery.isNullOrBlank()) {
+                "Search: ${event.searchQuery}"
+            } else {
+                event.domain
+            }
+
+            displayKey?.let { key ->
+                // Sanitize key (replace . with _) to prevent Firestore nested map interpretation
+                val safeKey = key.replace(".", "_")
+                // Use nested map for proper merging with SetOptions.merge()
+                updates["topBlockedDomains"] = mapOf(safeKey to com.google.firebase.firestore.FieldValue.increment(1))
             }
             
             // Update top reasons
             // Also sanitize reason for potential dots
             val reasonKey = event.reason.replace(".", "_").take(50)
-            updates["topReasons.$reasonKey"] = com.google.firebase.firestore.FieldValue.increment(1)
+            updates["topReasons"] = mapOf(reasonKey to com.google.firebase.firestore.FieldValue.increment(1))
         }
         
         statsRef.set(updates, SetOptions.merge())

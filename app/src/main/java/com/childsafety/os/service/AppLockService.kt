@@ -119,26 +119,16 @@ class AppLockService : AccessibilityService() {
             }
         }
         
-        // 2. Smart Settings Lock (Context-Aware Blocking)
-        // We scan textual content inside Settings to block specific dangerous actions
-        if (event.packageName == "com.android.settings" || event.packageName?.contains("settings") == true) {
-            // Check text list from event
-            val texts = event.text
-            for (text in texts) {
-                val content = text.toString().lowercase()
-                
-                // Dangerous Keywords
-                if (content.contains("admin") || 
-                    content.contains("uninstall") || 
-                    content.contains("force stop") || 
-                    content.contains("factory reset") || 
-                    content.contains("childsafetyos") || 
-                    content.contains("security")
-                ) {
-                    blockApp("com.android.settings", "Restricted Settings Menu")
-                    break
-                }
-            }
+        // 2. Smart Settings Lock (Hierarchy Inspection)
+        // Delegate to SettingsGuard for professional-grade protection
+        val rootNode = rootInActiveWindow
+        val (shouldBlock, reason) = SettingsGuard.shouldBlock(event, rootNode)
+        
+        // Important: Recycle the node to prevent memory leaks!
+        rootNode?.recycle()
+
+        if (shouldBlock) {
+             blockApp(event.packageName?.toString() ?: "com.android.settings", reason)
         }
     }
 
