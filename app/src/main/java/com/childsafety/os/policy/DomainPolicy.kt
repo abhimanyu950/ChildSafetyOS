@@ -56,26 +56,54 @@ object DomainPolicy {
         "celebjihad.com", "drunkenstepfather.com"
     )
 
-    // ========== CATEGORY: GAMBLING (40+ domains) ==========
+    // ========== CATEGORY: GAMBLING (100+ domains) ==========
     private val gamblingDomains = setOf(
-        // Major betting sites
-        "bet365.com", "betway.com", "888casino.com", "pokerstars.com",
-        "draftkings.com", "fanduel.com", "bovada.lv", "betfair.com",
-        "williamhill.com", "ladbrokes.com", "paddypower.com", "unibet.com",
-        "bwin.com", "betsson.com", "1xbet.com", "betonline.ag", "stake.com",
+        // Major betting sites (all TLDs)
+        "bet365.com", "bet365.in", "bet365.es", "bet365.it",
+        "betway.com", "betway.in", "betway.co.za",
+        "888casino.com", "888poker.com", "888sport.com",
+        "pokerstars.com", "pokerstars.in", "pokerstars.net",
+        "williamhill.com", "williamhill.es",
+        "ladbrokes.com", "ladbrokes.be",
+        "paddypower.com", "unibet.com", "unibet.in",
+        "bwin.com", "bwin.es", "bwin.it",
+        "betsson.com", "betonline.ag", "parimatch.com", "parimatch.in",
         
-        // Additional gambling
+        // 1xbet ALL variants
+        "1xbet.com", "1xbet.in", "1xbet.ng", "1xbet.ke", "1xbet.ug",
+        "1xbet.co.ke", "1xbet.mobi", "1xbetcom.com", "1xbet-one.com",
+        "1xstavka.ru", "1xbet.am", "1xbet.az", "1xbet.kz",
+        
+        // Indian gambling sites
+        "jungleerummy.com", "a23.com", "rummycircle.com", "rummyculture.com",
+        "adda52.com", "pokerbaazi.com", "spartan.poker", "9stacks.com",
+        "mpl.live", "dream11.com", "my11circle.com", "fantain.com",
+        "winzo.com", "getmega.com", "zupee.com", "ludo.com",
+        
+       // Additional gambling
         "betmgm.com", "caesars.com", "mgmresorts.com", "partypoker.com",
-        "888poker.com", "ggpoker.com", "wsop.com", "fulltiltpoker.com",
+        "ggpoker.com", "wsop.com", "fulltiltpoker.com",
         "sportsbetting.ag", "mybookie.ag", "betrivers.com", "pointsbet.com",
+        "draftkings.com", "fanduel.com", "bovada.lv",
         
         // Casino sites
         "casinoluck.com", "leovegas.com", "casumo.com", "mrgreen.com",
-        "rizk.com", "videoslots.com", "slotsmillion.com",
+        "rizk.com", "videoslots.com", "slotsmillion.com", "casinoroom.com",
+        "betfair.com", "skybet.com", "coral.co.uk", "betfred.com",
         
         // Crypto gambling
-        "stake.com", "roobet.com", "bc.game", "bustabit.com",
-        "primedice.com", "luckydice.com"
+        "stake.com", "stake.games", "roobet.com", "bc.game", "bustabit.com",
+        "primedice.com", "luckydice.com", "cloudbet.com", "fortunejack.com",
+        
+        // Sports betting keywords
+        "betting.com", "sportsbet.com", "sportingbet.com", "marathonbet.com",
+        "pinnacle.com", "betfair.com", "betclic.com", "betvictor.com"
+    )
+
+    // Gambling keyword patterns for additional matching
+    private val gamblingKeywords = listOf(
+        "1xbet", "bet365", "betway", "casino", "poker", "rummy", 
+        "betting", "sportsbet", "gamble", "slots", "jackpot"
     )
 
     // ========== CATEGORY: DRUGS (20+ domains) ==========
@@ -186,10 +214,12 @@ object DomainPolicy {
             return PolicyDecision.block(PolicyReason.DOMAIN, BlockCategory.CLOUD_BLOCKED)
         }
         
-        // 3. Check local categories
+        // 3. Check local categories (exact match and subdomain match)
         val category = when {
             adultDomains.any { h == it || h.endsWith(".$it") } -> BlockCategory.ADULT
             gamblingDomains.any { h == it || h.endsWith(".$it") } -> BlockCategory.GAMBLING
+            // Also check gambling keywords in domain (catches 1xbet.xyz, casino-xyz.com, etc.)
+            gamblingKeywords.any { keyword -> h.contains(keyword) } -> BlockCategory.GAMBLING
             drugDomains.any { h == it || h.endsWith(".$it") } -> BlockCategory.DRUGS
             violenceDomains.any { h == it || h.endsWith(".$it") } -> BlockCategory.VIOLENCE
             proxyDomains.any { h == it || h.endsWith(".$it") } -> BlockCategory.PROXY
@@ -289,7 +319,8 @@ object DomainPolicy {
         if (h.endsWith(".edu") || h.endsWith(".gov") || 
             h.contains("wikipedia.org") || h.contains("khanacademy.org") ||
             h.contains("stackoverflow.com") || h.contains("github.com") ||
-            h.contains("google.com") || h.contains("microsoft.com")) {
+            h.contains("google.com") || h.contains("microsoft.com") || h.contains("www.pw.live")
+            || h.contains("www.youtubekids.com") || h.contains("youtube.com") || h.contains("youtu.be")) {
             return com.childsafety.os.policy.TrustLevel.HIGH
         }
         

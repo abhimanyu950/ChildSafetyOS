@@ -305,7 +305,7 @@ object ImageMlQueue {
 
         // Use the shared engine instance (already initialized at start of function)
         // Compute Risk (Suspend)
-        val riskScore = antigravityEngine!!.computeRisk(bitmap, signals, isVideo = false)
+        val riskScore = antigravityEngine!!.computeRisk(bitmap, signals, false, currentAgeGroup)
         Log.i(TAG, "Antigravity Score: $riskScore for $imageId")
 
         // 7. Determine Action

@@ -151,7 +151,8 @@ object JsScripts {
     """
 
     /**
-     * Blocks a specific image by replacing it with a placeholder.
+     * Blocks a specific image by completely hiding it.
+     * STRICT: Image is replaced with a solid block, not just blurred.
      */
     fun blockedImageScript(imageId: String): String = """
         (function() {
@@ -160,15 +161,26 @@ object JsScripts {
             
             img.dataset.safetyStatus = 'blocked';
             
-            // Keep heavily blurred
-            img.style.filter = 'blur(30px)';
-            img.style.opacity = '0.3';
+            // COMPLETE BLOCK: Hide the image entirely
+            img.style.display = 'none !important';
+            img.style.visibility = 'hidden';
+            img.src = 'about:blank'; // Clear source to stop loading
             
-            // Update overlay to blocked state
+            // Replace with solid block placeholder
+            var placeholder = document.createElement('div');
+            placeholder.style.cssText = 'width:' + (img.width || 100) + 'px;height:' + (img.height || 100) + 'px;' +
+                'background:linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);' +
+                'display:flex;align-items:center;justify-content:center;color:#ff4444;' +
+                'font-size:24px;border-radius:8px;border:2px solid #ff4444;';
+            placeholder.innerHTML = '🛡️';
+            placeholder.dataset.csPlaceholder = '$imageId';
+            
+            img.parentNode.insertBefore(placeholder, img);
+            
+            // Remove any existing overlay
             var overlay = document.querySelector('[data-cs-overlay="$imageId"]');
             if (overlay) {
-                overlay.style.background = 'rgba(220, 38, 38, 0.85)';
-                overlay.innerHTML = '🚫 Blocked';
+                overlay.remove();
             }
         })();
     """.trimIndent()

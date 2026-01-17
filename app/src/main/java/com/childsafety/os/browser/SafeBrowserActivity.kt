@@ -9,7 +9,7 @@ import android.webkit.*
 import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
 import com.childsafety.os.ChildSafetyApp
-import com.childsafety.os.cloud.EventUploader
+
 import com.childsafety.os.policy.AgeGroup
 import com.childsafety.os.policy.DomainPolicy
 import androidx.lifecycle.lifecycleScope

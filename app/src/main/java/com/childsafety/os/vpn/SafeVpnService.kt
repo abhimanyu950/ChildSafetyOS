@@ -4,7 +4,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Log
-import com.childsafety.os.cloud.EventUploader
+import com.childsafety.os.cloud.FirebaseManager
 import com.childsafety.os.ChildSafetyApp
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -121,9 +121,9 @@ class SafeVpnService : VpnService() {
             vpnThread = Thread(::runVpnLoop, "VPN-Thread").apply { start() }
 
             // Log VPN start event
-            EventUploader.logAppStart(
+            FirebaseManager.logAppStart(
                 apiLevel = "VPN_START_${ageGroup.name}",
-                deviceId = ChildSafetyApp.appDeviceId
+                deviceIdParam = ChildSafetyApp.appDeviceId
             )
 
             Log.i(TAG, "VPN started successfully")

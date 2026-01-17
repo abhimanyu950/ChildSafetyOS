@@ -131,9 +131,29 @@ object FirebaseManager {
             .collection("events")
             .document()
         
-        val eventWithId = event.copy(eventId = eventRef.id)
+        // Create event data map with explicit timestamp for Firestore rules validation
+        val eventData = hashMapOf<String, Any?>(
+            "eventId" to eventRef.id,
+            "eventType" to event.eventType.name,
+            "category" to event.category.name,
+            "severity" to event.severity.name,
+            "reason" to event.reason,
+            "blockType" to event.blockType.name,
+            "browserType" to event.browserType.name,
+            "timestamp" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+        )
         
-        eventRef.set(eventWithId)
+        // Add optional fields
+        event.url?.let { eventData["url"] = it }
+        event.domain?.let { eventData["domain"] = it }
+        event.searchQuery?.let { eventData["searchQuery"] = it }
+        event.imageUrl?.let { eventData["imageUrl"] = it }
+        event.mlScores?.let { eventData["mlScores"] = it }
+        event.threshold?.let { eventData["threshold"] = it }
+        event.appPackage?.let { eventData["appPackage"] = it }
+        event.appName?.let { eventData["appName"] = it }
+        
+        eventRef.set(eventData)
             .addOnSuccessListener {
                 Log.d(TAG, "Event logged: ${event.eventType} - ${event.reason}")
                 
@@ -144,7 +164,7 @@ object FirebaseManager {
                 checkAlertConditions(event)
             }
             .addOnFailureListener { e ->
-                Log.e(TAG, "Failed to log event", e)
+                Log.e(TAG, "Failed to log event: ${e.message}", e)
             }
             
         // GAMIFICATION HOOK:
@@ -560,6 +580,120 @@ object FirebaseManager {
             message = message,
             relatedEventIds = emptyList()
         )
+    }
+
+    /**
+     * DEBUG: Inject mock events for dashboard testing
+     * Call this from the app to populate the events collection
+     */
+    fun injectMockEvents() {
+        if (!initialized) {
+            Log.w(TAG, "Firebase not initialized, cannot inject mock events")
+            return
+        }
+        
+        Log.i(TAG, "=== INJECTING MOCK EVENTS ===")
+        Log.i(TAG, "Device ID: $deviceId")
+        
+        // DIRECT WRITE TEST - bypasses logEvent to test raw Firestore access
+        val testEventRef = db.collection("devices")
+            .document(deviceId)
+            .collection("events")
+            .document()
+        
+        val testData = hashMapOf(
+            "eventId" to testEventRef.id,
+            "eventType" to "SEARCH_BLOCKED",
+            "category" to "CONTENT_FILTER",
+            "severity" to "CRITICAL",
+            "reason" to "TEST EVENT - sexual harassment keywords",
+            "searchQuery" to "sexual harassment help",
+            "domain" to "www.google.com",
+            "url" to "https://www.google.com/search?q=test",
+            "blockType" to "KEYWORD",
+            "browserType" to "SAFE_BROWSER",
+            "timestamp" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+        )
+        
+        testEventRef.set(testData)
+            .addOnSuccessListener {
+                Log.i(TAG, "✅ TEST EVENT WRITTEN SUCCESSFULLY! EventId: ${testEventRef.id}")
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "❌ TEST EVENT FAILED: ${e.message}", e)
+            }
+        
+        // Also inject via normal logEvent flow
+        logSearchBlock(
+            searchQuery = "sexual harassment help",
+            url = "https://www.google.com/search?q=sexual+harassment+help",
+            domain = "www.google.com",
+            reason = "High-risk keywords detected (quick check)"
+        )
+        
+        logImageBlock(
+            imageUrl = "https://example.com/blocked-image.jpg",
+            mlScores = mapOf("antigravity_score" to 0.85, "network_score" to 0.3),
+            threshold = mapOf("mode" to 0.0, "blocked" to 1.0),
+            reason = "Antigravity Block (Score: 85) - Mode: CHILD",
+            url = "https://example.com/page",
+            domain = "example.com"
+        )
+        
+        logUrlBlock(
+            url = "https://pornhub.com",
+            domain = "pornhub.com",
+            reason = "Blocked Domain: Adult Content",
+            blockType = BlockType.DNS
+        )
+        
+        logVideoBlock(
+            videoUrl = "https://youtube.com/watch?v=abc123",
+            mlScores = mapOf("antigravity_score" to 0.78, "frame_risk" to 0.82),
+            threshold = mapOf("mode" to 0.0, "blocked" to 1.0),
+            reason = "Video Blocked: Risk Score 82 - Romantic content detected",
+            url = "https://youtube.com/watch?v=abc123",
+            domain = "youtube.com"
+        )
+        
+        logVpnEvent(started = true)
+        
+        Log.i(TAG, "=== MOCK EVENTS INJECTION COMPLETE ===")
+    }
+
+    /**
+     * Log app start event (replaces EventUploader.logAppStart)
+     */
+    fun logAppStart(apiLevel: String, deviceIdParam: String) {
+        if (!initialized) return
+        
+        Log.i(TAG, "APP_START device=$deviceIdParam api=$apiLevel")
+        // App start is logged via device status update, no separate event needed
+    }
+
+    /**
+     * Log blocked domain from VPN (replaces EventUploader.logBlockedDomain)
+     */
+    fun logBlockedDomain(domain: String, deviceIdParam: String) {
+        if (!initialized) return
+        
+        logUrlBlock(
+            url = "dns://$domain",
+            domain = domain,
+            reason = "Blocked: VPN DNS Filter",
+            blockType = BlockType.DNS,
+            browserType = BrowserType.OTHER
+        )
+    }
+
+    /**
+     * Log risk engine decision (replaces EventUploader.logRiskEvent)
+     */
+    fun logRiskEvent(jsonPayload: String) {
+        if (!initialized) return
+        
+        Log.d(TAG, "RISK_ENGINE: $jsonPayload")
+        // Risk events are already logged via logImageBlock/logVideoBlock
     }
 
     /**

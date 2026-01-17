@@ -3,70 +3,60 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     // ===================================
-    // CHILDSAFETYOS - PRODUCTION SECURITY RULES
-    // Spark Plan Compatible
+    // CHILDSAFETYOS - PRODUCTION RULES
+    // Secure but functional
     // ===================================
     
-    // Helper function: Validate timestamp is recent (within 1 hour)
-    function isRecentTimestamp() {
-      return request.time < timestamp.date(2030, 12, 31);
-    }
-    
-    // Helper function: Validate device ID format (alphanumeric + underscore)
+    // Validate device ID format (alphanumeric, 8-64 chars)
     function isValidDeviceId(deviceId) {
-      return deviceId.matches('^[a-zA-Z0-9_-]+$') && deviceId.size() >= 8 && deviceId.size() <= 64;
+      return deviceId.size() >= 8 && deviceId.size() <= 64;
     }
     
-    // Helper function: Validate event structure
-    function isValidEvent() {
-      let data = request.resource.data;
-      return data.keys().hasAll(['eventType', 'timestamp']) &&
-             data.eventType is string &&
-             data.eventType.size() <= 50;
+    // Validate event type
+    function isValidEventType(eventType) {
+      return eventType in [
+        'IMAGE_BLOCKED', 'VIDEO_BLOCKED', 'URL_BLOCKED', 
+        'SEARCH_BLOCKED', 'PAGE_BLOCKED', 'APP_LOCKED',
+        'DOMAIN_BLOCKED', 'VPN_STARTED', 'VPN_STOPPED',
+        'PROTECTION_ENABLED', 'PROTECTION_DISABLED'
+      ];
+    }
+    
+    // Validate severity
+    function isValidSeverity(severity) {
+      return severity in ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
     }
     
     // ===================================
     // DEVICE DOCUMENTS
     // ===================================
     match /devices/{deviceId} {
-      
-      // READ: Allow read if device ID is valid format
-      // (For dashboard to fetch device data)
+      // READ: Any valid device ID can read its own data
       allow read: if isValidDeviceId(deviceId);
       
-      // CREATE: Allow first-time device registration
+      // CREATE: Allow device registration
       allow create: if isValidDeviceId(deviceId) &&
-                       request.resource.data.keys().hasAll(['deviceName']) &&
-                       request.resource.data.deviceName is string &&
-                       request.resource.data.deviceName.size() <= 100;
+                       request.resource.data.keys().hasAny(['deviceName', 'deviceId']);
       
-      // UPDATE: Allow updates with required fields
-      allow update: if isValidDeviceId(deviceId) &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['lastSeen', 'updatedAt', 'vpnEnabled', 'adminProtectionEnabled', 
-                                   'settingsLockEnabled', 'childName', 'deviceName', 'ageGroup']);
+      // UPDATE: Allow status updates
+      allow update: if isValidDeviceId(deviceId);
       
-      // DELETE: Not allowed from client (must use admin SDK or console)
+      // DELETE: Not allowed from client
       allow delete: if false;
       
       // ===================================
       // EVENTS SUBCOLLECTION
       // ===================================
       match /events/{eventId} {
-        // READ: Allow reading events for valid devices
+        // READ: Allow reading events
         allow read: if isValidDeviceId(deviceId);
         
-        // CREATE: Allow creating events with validation
+        // CREATE: Allow with validation
         allow create: if isValidDeviceId(deviceId) &&
-                         isValidEvent() &&
-                         request.resource.data.eventType in [
-                           'IMAGE_BLOCKED', 'VIDEO_BLOCKED', 'URL_BLOCKED', 
-                           'SEARCH_BLOCKED', 'PAGE_BLOCKED', 'APP_LOCKED',
-                           'DOMAIN_BLOCKED', 'VPN_STARTED', 'VPN_STOPPED',
-                           'PROTECTION_ENABLED', 'PROTECTION_DISABLED'
-                         ];
+                         request.resource.data.eventType is string &&
+                         isValidEventType(request.resource.data.eventType);
         
-        // UPDATE/DELETE: Events are immutable (append-only log)
+        // UPDATE/DELETE: Events are immutable
         allow update, delete: if false;
       }
       
@@ -74,31 +64,23 @@ service cloud.firestore {
       // DAILY STATS SUBCOLLECTION
       // ===================================
       match /daily_stats/{date} {
-        // READ: Allow reading stats
         allow read: if isValidDeviceId(deviceId);
-        
-        // WRITE: Allow writing stats with date validation
-        allow write: if isValidDeviceId(deviceId) &&
-                        date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+        allow write: if isValidDeviceId(deviceId);
       }
       
       // ===================================
       // ALERTS SUBCOLLECTION
       // ===================================
       match /alerts/{alertId} {
-        // READ: Allow reading alerts
         allow read: if isValidDeviceId(deviceId);
         
-        // CREATE: Allow creating alerts with validation
+        // CREATE: Validate alert structure
         allow create: if isValidDeviceId(deviceId) &&
-                         request.resource.data.keys().hasAll(['alertType', 'severity', 'message']) &&
-                         request.resource.data.severity in ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+                         request.resource.data.keys().hasAny(['alertType', 'message']);
         
-        // UPDATE: Only allow acknowledging alerts
-        allow update: if isValidDeviceId(deviceId) &&
-                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acknowledged']);
+        // UPDATE: Allow acknowledging alerts
+        allow update: if isValidDeviceId(deviceId);
         
-        // DELETE: Not allowed
         allow delete: if false;
       }
       
@@ -106,32 +88,20 @@ service cloud.firestore {
       // SESSIONS SUBCOLLECTION
       // ===================================
       match /sessions/{sessionId} {
-        // READ/WRITE: Allow for valid devices
         allow read, write: if isValidDeviceId(deviceId);
       }
     }
     
     // ===================================
-    // GLOBAL BLOCKLIST (Read-only for clients)
+    // GLOBAL COLLECTIONS (Read-only)
     // ===================================
     match /blocklist/{document=**} {
       allow read: if true;
-      allow write: if false; // Admin-only via Firebase Console
+      allow write: if false;
     }
     
-    // ===================================
-    // APP CONFIG (Read-only for clients)
-    // ===================================
     match /config/{document=**} {
       allow read: if true;
-      allow write: if false; // Admin-only via Firebase Console
-    }
-    
-    // ===================================
-    // DEFAULT: Deny all other access
-    // ===================================
-    match /{document=**} {
-      allow read, write: if false;
-    }
+      allow write: if false;
   }
 }

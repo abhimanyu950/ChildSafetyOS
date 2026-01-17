@@ -67,10 +67,18 @@ object PolicyEngine {
         )
 
         // 5. Compute Risk via Antigravity Kernel (suspend function)
-        // We handle bitmap as null here (text-only/page check context)
-        val finalRisk = antigravityKernel!!.computeRisk(null, signals, false).toInt()
+        val kernelRisk = antigravityKernel!!.computeRisk(null, signals, false, ageGroup).toInt()
         
-        // 6. Action Interpretation (Legacy thresholds logic moved here)
+        // 6. Text Safety Overlay (Consistency Fix)
+        // The Kernel weights JS low (15-20%) for hybrid scoring.
+        // But if the specialized Text Classifier says it's risky (e.g. erotica), we MUST enforce it.
+        val finalRisk = if (textResult.isRisky || textScore > 85) {
+             maxOf(kernelRisk, 80) // Force critical risk for text violations
+        } else {
+             kernelRisk
+        }
+        
+        // 7. Action Interpretation
         val action = determineAction(finalRisk, netScore, ageGroup)
         val reason = "Risk Score: $finalRisk (Net:$netScore JS:${finalJsScore.toInt()} AI:$aiScore)"
 

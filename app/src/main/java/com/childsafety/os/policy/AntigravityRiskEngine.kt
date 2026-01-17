@@ -51,10 +51,10 @@ class AntigravityRiskEngine(private val context: Context) {
      * 3. Run AI (If needed)
      * 4. Apply Dynamic Weights -> Synergy -> EMA
      */
-    suspend fun computeRisk(bitmap: Bitmap?, signals: RiskSignals, isVideo: Boolean): Float = withContext(Dispatchers.Default) {
+    suspend fun computeRisk(bitmap: Bitmap?, signals: RiskSignals, isVideo: Boolean, ageGroup: AgeGroup): Float = withContext(Dispatchers.Default) {
         // 0. Helper: If no image, just use context signals
         if (bitmap == null) {
-            return@withContext calculateHybridScore(0f, signals)
+            return@withContext calculateHybridScore(0f, signals, ageGroup)
         }
 
         // 1. pHash Caching (Memory L1)
@@ -63,7 +63,7 @@ class AntigravityRiskEngine(private val context: Context) {
         if (cachedScore != null) {
             // Log.v(TAG, "Cache Hit: $pHash -> $cachedScore")
             // Recalculate hybrid with cached AI score in case signals changed
-            val combined = calculateHybridScore(cachedScore, signals)
+            val combined = calculateHybridScore(cachedScore, signals, ageGroup)
             return@withContext applyTemporalSmoothing(combined, isVideo)
         }
 
@@ -88,7 +88,7 @@ class AntigravityRiskEngine(private val context: Context) {
         riskCache.put(pHash, aiScoreRaw)
 
         // 4. Apply Dynamic Weights -> Synergy
-        val rawHybridRisk = calculateHybridScore(aiScoreRaw, signals)
+        val rawHybridRisk = calculateHybridScore(aiScoreRaw, signals, ageGroup)
 
         // 5. EMA Smoothing
         return@withContext applyTemporalSmoothing(rawHybridRisk, isVideo)
@@ -97,10 +97,25 @@ class AntigravityRiskEngine(private val context: Context) {
     /**
      * Step A & B: Dynamic Weighting & Synergy Boosting
      */
-    private fun calculateHybridScore(aiScore: Float, signals: RiskSignals): Float {
+    private fun calculateHybridScore(aiScore: Float, signals: RiskSignals, ageGroup: AgeGroup): Float {
         // Step A: Dynamic Weighting (Context Awareness)
         val (wAi, wNet, wJs) = when (signals.trust) {
-            TrustLevel.HIGH -> Triple(0.30f, 0.40f, 0.30f)       // Trust domain (Edu/Gov)
+            TrustLevel.HIGH -> {
+                // Adaptive Trust Breakthrough:
+                // If AI is extremely confident (> 85%), we must trust the pixels over the domain meta-trust.
+                
+                // CHILD GUARD: For Children, we trust the domain LESS for visual content.
+                // Math: Weight 0.65 * AI 47% = 30.55 (Blocked).
+                // This ensures we catch "soft" romantic/sexy content (45-60% confidence)
+                // which is typical for "Hot Romantic Scenes" on YouTube.
+                if (ageGroup == AgeGroup.CHILD) {
+                    Triple(0.65f, 0.30f, 0.20f) // Strict Guard: Blocks >46% confident Sexy
+                } else if (aiScore >= 85f) {
+                    Triple(0.50f, 0.30f, 0.20f) // Breakthrough Weights for others
+                } else {
+                    Triple(0.30f, 0.40f, 0.30f) // Standard High Trust (Strong dampening)
+                }
+            }
             TrustLevel.NEUTRAL -> Triple(0.60f, 0.25f, 0.15f)    // Standard
             TrustLevel.SUSPICIOUS -> Triple(0.80f, 0.10f, 0.10f) // Paranoid
         }

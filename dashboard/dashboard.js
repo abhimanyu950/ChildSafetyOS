@@ -188,11 +188,34 @@ function listenToEvents() {
 // Create Event Element
 function createEventElement(event) {
     const div = document.createElement('div');
-    div.className = `event-item severity-${event.severity}`;
+
+    // Check if this is a crisis-related event
+    const crisisInfo = detectCrisisInEvent(event);
+    const isCrisisEvent = crisisInfo.isCrisis;
+
+    div.className = `event-item severity-${event.severity} ${isCrisisEvent ? 'crisis-event' : ''}`;
     div.dataset.severity = event.severity;
     div.dataset.type = event.eventType;
 
     const timestamp = event.timestamp ? formatTimestamp(event.timestamp.toDate()) : 'Just now';
+    const eventId = event.eventId || `event-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Crisis guidance button and panel
+    let crisisButtonHtml = '';
+    let crisisGuidanceHtml = '';
+
+    if (isCrisisEvent) {
+        crisisButtonHtml = `
+            <button class="guidance-toggle-btn event-guidance-btn" onclick="toggleEventGuidance('${eventId}', this)">
+                🆘 View Parent Guidance
+                <svg class="toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+            </button>
+        `;
+
+        crisisGuidanceHtml = createCrisisGuidancePanel(eventId, crisisInfo.crisisType);
+    }
 
     div.innerHTML = `
         <div class="event-header">
@@ -201,9 +224,166 @@ function createEventElement(event) {
         </div>
         <div class="event-reason">${event.reason || 'No reason provided'}</div>
         ${createEventDetails(event)}
+        ${crisisButtonHtml}
+        ${crisisGuidanceHtml}
     `;
 
     return div;
+}
+
+// Detect if event contains crisis keywords
+function detectCrisisInEvent(event) {
+    // Crisis keyword categories
+    const keywordCategories = {
+        'SUICIDE': [
+            'suicide', 'suicidal', 'kill myself', 'end my life',
+            'hang myself', 'slit wrists', 'i want to die',
+            'best way to die', 'painless death', 'how to commit suicide',
+            'suicide method', 'ways to die'
+        ],
+        'SELF_HARM': [
+            'self harm', 'self-harm', 'selfharm', 'cutting myself',
+            'hurt myself', 'burning myself', 'self injury'
+        ],
+        'OVERDOSE': [
+            'overdose', 'take pills', 'drug overdose', 'poison myself'
+        ],
+        'BULLYING': [
+            'being bullied', 'bullied at school', 'cyberbullying', 'cyber bullying',
+            'everyone hates me', 'no one likes me', 'they make fun of me',
+            'getting picked on', 'being harassed', 'they hurt me',
+            'beat me up', 'threaten me', 'spreading rumors about me',
+            'embarrassed me', 'humiliated me', 'excluded me'
+        ],
+        'SEXUAL_HARASSMENT': [
+            'sexual harassment', 'touched me inappropriately', 'inappropriate touching',
+            'molested', 'sexual abuse', 'raped', 'forced me to',
+            'showed me private parts', 'sent me nude', 'asked for nudes',
+            'sexting', 'unwanted sexual', 'sexual assault',
+            'touched my private', 'uncomfortable touching'
+        ],
+        'GROOMING': [
+            'grooming', 'older person online', 'secret relationship',
+            'dont tell your parents', 'our little secret', 'meet in person',
+            'send me pictures', 'how old are you', 'are you alone',
+            'where do you live', 'come meet me', 'special friend online',
+            'sugar daddy', 'pay for pics', 'webcam show',
+            'predator', 'stranger online asking', 'adult friend'
+        ]
+    };
+
+    const textToCheck = [
+        event.searchQuery || '',
+        event.reason || '',
+        event.url || ''
+    ].join(' ').toLowerCase();
+
+    // Check each category
+    for (const [crisisType, keywords] of Object.entries(keywordCategories)) {
+        for (const keyword of keywords) {
+            if (textToCheck.includes(keyword)) {
+                return { isCrisis: true, crisisType: crisisType };
+            }
+        }
+    }
+
+    return { isCrisis: false, crisisType: null };
+}
+
+// Create crisis guidance panel HTML
+function createCrisisGuidancePanel(eventId, crisisType) {
+    const recommendations = getCrisisRecommendationsClient(crisisType);
+
+    return `
+        <div class="crisis-guidance-panel" id="event-guidance-${eventId}" style="display: none;">
+            <div class="crisis-header">
+                <span class="crisis-icon">🆘</span>
+                <span class="crisis-title">Parent Guidance: ${getCrisisTypeLabel(crisisType)}</span>
+            </div>
+            <div class="recommendations-list-crisis">
+                ${recommendations.map(rec => `
+                    <div class="recommendation-item-crisis ${rec.priority.toLowerCase()}">
+                        <div class="rec-priority-badge ${rec.priority.toLowerCase()}">${rec.priority}</div>
+                        <div class="rec-content-crisis">
+                            <strong>${rec.title}</strong>
+                            <p>${rec.message}</p>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="crisis-helpline">
+                <strong>📞 Crisis Helplines:</strong> iCall: 9152987821 | Vandrevala: 1860-2662-345 | NIMHANS: 080-46110007
+            </div>
+        </div>
+    `;
+}
+
+// Get crisis recommendations on client side
+function getCrisisRecommendationsClient(crisisType) {
+    const recommendations = {
+        'SUICIDE': [
+            { priority: 'URGENT', title: 'Stay Calm and Approach Gently', message: 'This search may indicate distress. Approach your child calmly without judgment. Ask open-ended questions like "How are you feeling today?"' },
+            { priority: 'URGENT', title: 'Take It Seriously', message: 'Even if it seems like curiosity, treat this seriously. Ask directly but compassionately if they are having thoughts of hurting themselves.' },
+            { priority: 'ACTION', title: 'Seek Professional Help', message: 'Contact a mental health professional or call a crisis helpline immediately.' },
+            { priority: 'INFO', title: 'Remove Access to Harmful Means', message: 'Ensure medications and sharp objects are secured. This is a standard safety precaution.' }
+        ],
+        'SELF_HARM': [
+            { priority: 'URGENT', title: 'Approach With Compassion', message: 'Self-harm is often a coping mechanism for emotional pain. Avoid reacting with anger or shock. Express concern and love.' },
+            { priority: 'ACTION', title: 'Open a Conversation', message: 'Ask: "I noticed you might be going through something difficult. I am here for you. Would you like to talk?"' },
+            { priority: 'ACTION', title: 'Seek Professional Support', message: 'A therapist specializing in adolescents can help. Contact your pediatrician for referrals.' }
+        ],
+        'OVERDOSE': [
+            { priority: 'URGENT', title: 'Check for Immediate Danger', message: 'If you suspect your child has taken substances, seek medical attention immediately.' },
+            { priority: 'ACTION', title: 'Secure Medications', message: 'Lock away all prescription and over-the-counter medications. This is a critical safety step.' },
+            { priority: 'ACTION', title: 'Have an Honest Conversation', message: 'When safe, discuss why they searched for this. Listen without judgment and express your support.' }
+        ],
+        'BULLYING': [
+            { priority: 'URGENT', title: 'Listen Without Judgment', message: 'Your child may be experiencing bullying. Create a safe space for them to talk. Say: "I noticed something might be bothering you. I am here to listen and help."' },
+            { priority: 'URGENT', title: 'Take It Seriously', message: 'Bullying can have severe emotional and psychological effects. Do not dismiss their feelings or tell them to "just ignore it."' },
+            { priority: 'ACTION', title: 'Document the Incidents', message: 'Keep records of bullying incidents including dates, what happened, and who was involved. This helps when reporting to school authorities.' },
+            { priority: 'ACTION', title: 'Contact the School', message: 'Report the bullying to school counselors or administrators. Most schools have anti-bullying policies and can intervene.' },
+            { priority: 'INFO', title: 'Build Their Confidence', message: 'Help your child develop coping strategies and resilience. Consider counseling if the bullying has affected their mental health.' },
+            { priority: 'INFO', title: 'Monitor Online Activity', message: 'If cyberbullying is involved, help them block bullies and report accounts. Consider adjusting privacy settings together.' }
+        ],
+        'SEXUAL_HARASSMENT': [
+            { priority: 'URGENT', title: 'Ensure Their Safety First', message: 'If your child is in immediate danger, contact emergency services. Their physical safety is the top priority.' },
+            { priority: 'URGENT', title: 'Believe and Support Them', message: 'If your child discloses harassment or abuse, believe them. Say: "Thank you for telling me. This is not your fault. I am here to protect you."' },
+            { priority: 'URGENT', title: 'Do Not Confront the Abuser Alone', message: 'Avoid confronting the alleged perpetrator directly. This could escalate the situation or compromise evidence.' },
+            { priority: 'ACTION', title: 'Report to Authorities', message: 'Report to CHILDLINE India (1098) or local police. Sexual harassment/abuse of minors is a serious crime under POCSO Act.' },
+            { priority: 'ACTION', title: 'Seek Medical Attention', message: 'If physical abuse is suspected, seek medical examination. Hospitals can document evidence and provide care.' },
+            { priority: 'ACTION', title: 'Get Professional Counseling', message: 'Sexual trauma requires professional support. Contact a child psychologist or trauma specialist as soon as possible.' },
+            { priority: 'INFO', title: 'Preserve Evidence', message: 'If online harassment, screenshot messages before they are deleted. Do not delete any evidence from devices.' }
+        ],
+        'GROOMING': [
+            { priority: 'URGENT', title: 'Stay Calm - Do Not Alert the Predator', message: 'If you suspect grooming, do not confront your child in a way that might tip off the predator. They might instruct your child to delete evidence.' },
+            { priority: 'URGENT', title: 'Document Everything', message: 'Take screenshots of all conversations, profile information, and any other evidence. Do not delete anything from the device.' },
+            { priority: 'ACTION', title: 'Report to Cyber Crime', message: 'Report to NCPCR (childlineindia.org), Cyber Crime Portal (cybercrime.gov.in), or call 1930. Online predators are criminals.' },
+            { priority: 'ACTION', title: 'Talk to Your Child', message: 'Explain what grooming is in age-appropriate terms. Reassure them they are not in trouble and you are there to protect them.' },
+            { priority: 'ACTION', title: 'Block and Report the Account', message: 'Block the predator on all platforms and report their account. Most platforms have dedicated teams for child safety reports.' },
+            { priority: 'INFO', title: 'Educate About Online Safety', message: 'Teach your child about online stranger danger: never share personal info, photos, or meet anyone from the internet without parent supervision.' },
+            { priority: 'INFO', title: 'Consider Professional Support', message: 'Grooming can be psychologically manipulative. A counselor can help your child process the experience.' }
+        ],
+        'CRISIS': [
+            { priority: 'URGENT', title: 'Check In With Your Child', message: 'This search suggests your child may be experiencing distress. Have a calm, supportive conversation.' },
+            { priority: 'ACTION', title: 'Seek Professional Guidance', message: 'Consider consulting a mental health professional for guidance.' }
+        ]
+    };
+
+    return recommendations[crisisType] || recommendations['CRISIS'];
+}
+
+// Toggle event guidance visibility
+function toggleEventGuidance(eventId, btn) {
+    const guidanceDiv = document.getElementById(`event-guidance-${eventId}`);
+
+    if (guidanceDiv && btn) {
+        const isHidden = guidanceDiv.style.display === 'none';
+        guidanceDiv.style.display = isHidden ? 'block' : 'none';
+        btn.classList.toggle('expanded', isHidden);
+        btn.innerHTML = isHidden
+            ? `🆘 Hide Parent Guidance <svg class="toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>`
+            : `🆘 View Parent Guidance <svg class="toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>`;
+    }
 }
 
 function createEventDetails(event) {
@@ -591,42 +771,142 @@ function renderUsageChart(data) {
 
 // Listen to Alerts
 function listenToAlerts() {
+    // Simplified query - fetch all alerts and filter client-side to avoid composite index issues
     const alertsRef = db.collection('devices')
         .doc(currentDeviceId)
         .collection('alerts')
-        .where('acknowledged', '==', false)
         .orderBy('timestamp', 'desc')
-        .limit(5);
+        .limit(10);
+
+    console.log('Setting up alerts listener for device:', currentDeviceId);
 
     alertsListener = alertsRef.onSnapshot((snapshot) => {
         const alertsList = document.getElementById('alertsList');
+        console.log('Alerts snapshot received, docs:', snapshot.size);
 
         if (snapshot.empty) {
-            alertsList.innerHTML = '<p class="no-data">No alerts</p>';
+            console.log('No alerts found in collection');
+            alertsList.innerHTML = '<p class="empty-state">No active alerts</p>';
             return;
         }
 
         alertsList.innerHTML = '';
+        let displayedCount = 0;
+
         snapshot.forEach((doc) => {
             const alert = doc.data();
+            console.log('Alert data:', alert);
+
+            // Client-side filter for unacknowledged alerts
+            if (alert.acknowledged === true) {
+                return; // Skip acknowledged alerts
+            }
+
             const alertElement = createAlertElement(alert);
             alertsList.appendChild(alertElement);
+            displayedCount++;
         });
+
+        if (displayedCount === 0) {
+            alertsList.innerHTML = '<p class="empty-state">No active alerts</p>';
+        }
+    }, (error) => {
+        console.error('Error listening to alerts:', error);
+        document.getElementById('alertsList').innerHTML =
+            `<p class="empty-state" style="color: var(--danger);">Error loading alerts: ${error.message}</p>`;
     });
 }
 
 function createAlertElement(alert) {
     const div = document.createElement('div');
-    div.className = `alert-item ${alert.severity === 'CRITICAL' ? 'critical' : ''}`;
+    const isCrisisAlert = alert.alertType === 'CRISIS_ALERT';
+    div.className = `alert-item ${alert.severity === 'CRITICAL' ? 'critical' : ''} ${isCrisisAlert ? 'crisis-alert' : ''}`;
 
     const timestamp = alert.timestamp ? formatTimestamp(alert.timestamp.toDate()) : 'Just now';
+    const alertId = alert.alertId || `alert-${Date.now()}`;
+
+    // Debug log
+    console.log('Creating alert element:', {
+        alertType: alert.alertType,
+        isCrisisAlert,
+        hasRecommendations: alert.recommendations?.length > 0,
+        recommendations: alert.recommendations
+    });
+
+    let recommendationsHtml = '';
+    let guidanceButtonHtml = '';
+
+    if (isCrisisAlert && alert.recommendations && alert.recommendations.length > 0) {
+        guidanceButtonHtml = `
+            <button class="guidance-toggle-btn" onclick="toggleGuidance('${alertId}', this)">
+                🆘 View Parent Guidance
+                <svg class="toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+            </button>
+        `;
+
+        recommendationsHtml = `
+            <div class="crisis-recommendations" id="guidance-${alertId}" style="display: none;">
+                <div class="crisis-header">
+                    <span class="crisis-icon">🆘</span>
+                    <span class="crisis-title">Parent Guidance: ${getCrisisTypeLabel(alert.crisisType)}</span>
+                </div>
+                <div class="recommendations-list-crisis">
+                    ${alert.recommendations.map(rec => `
+                        <div class="recommendation-item-crisis ${(rec.priority || 'info').toLowerCase()}">
+                            <div class="rec-priority-badge ${(rec.priority || 'info').toLowerCase()}">${rec.priority || 'INFO'}</div>
+                            <div class="rec-content-crisis">
+                                <strong>${rec.title}</strong>
+                                <p>${rec.message}</p>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="crisis-helpline">
+                    <strong>📞 Crisis Helplines:</strong> iCall: 9152987821 | Vandrevala: 1860-2662-345 | NIMHANS: 080-46110007
+                </div>
+            </div>
+        `;
+    }
 
     div.innerHTML = `
-        <div>${alert.message}</div>
-        <div class="alert-time">${timestamp}</div>
+        <div class="alert-main-content">
+            <div class="alert-message">${alert.message}</div>
+            <div class="alert-time">${timestamp}</div>
+            ${guidanceButtonHtml}
+        </div>
+        ${recommendationsHtml}
     `;
 
     return div;
+}
+
+// Toggle guidance visibility
+function toggleGuidance(alertId, btn) {
+    const guidanceDiv = document.getElementById(`guidance-${alertId}`);
+
+    if (guidanceDiv && btn) {
+        const isHidden = guidanceDiv.style.display === 'none';
+        guidanceDiv.style.display = isHidden ? 'block' : 'none';
+        btn.classList.toggle('expanded', isHidden);
+        btn.innerHTML = isHidden
+            ? `🆘 Hide Parent Guidance <svg class="toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>`
+            : `🆘 View Parent Guidance <svg class="toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>`;
+    }
+}
+
+function getCrisisTypeLabel(crisisType) {
+    const labels = {
+        'SUICIDE': 'Suicide/Suicidal Ideation',
+        'SELF_HARM': 'Self-Harm',
+        'OVERDOSE': 'Overdose Concern',
+        'BULLYING': 'Bullying/Cyberbullying',
+        'SEXUAL_HARASSMENT': 'Sexual Harassment/Abuse',
+        'GROOMING': 'Online Grooming/Predator',
+        'CRISIS': 'Mental Health Crisis'
+    };
+    return labels[crisisType] || 'Safety Alert';
 }
 
 // Filter Events
@@ -716,5 +996,94 @@ window.injectMockData = function () {
         settingsLockEnabled: false
     });
 
-    alert("Mock data injected!");
+    // NEW: Inject mock events into Live Activity Feed
+    const mockEvents = [
+        {
+            eventType: 'SEARCH_BLOCKED',
+            severity: 'CRITICAL',
+            reason: 'High-risk keywords detected: sexual harassment',
+            searchQuery: 'sexual harassment',
+            domain: 'www.google.com',
+            timestamp: { toDate: () => new Date(Date.now() - 2 * 60000) } // 2 min ago
+        },
+        {
+            eventType: 'IMAGE_BLOCKED',
+            severity: 'HIGH',
+            reason: 'Antigravity block: Score 78.5',
+            domain: 'www.shutterstock.com',
+            mlScores: { antigravity: 0.785 },
+            timestamp: { toDate: () => new Date(Date.now() - 5 * 60000) }
+        },
+        {
+            eventType: 'URL_BLOCKED',
+            severity: 'CRITICAL',
+            reason: 'Blocked Domain: Adult Content',
+            domain: 'pornhub.com',
+            url: 'https://pornhub.com',
+            timestamp: { toDate: () => new Date(Date.now() - 10 * 60000) }
+        },
+        {
+            eventType: 'VIDEO_BLOCKED',
+            severity: 'HIGH',
+            reason: 'Video Blocked: Risk Score 85',
+            domain: 'youtube.com',
+            mlScores: { antigravity: 0.85 },
+            timestamp: { toDate: () => new Date(Date.now() - 15 * 60000) }
+        },
+        {
+            eventType: 'SEARCH_BLOCKED',
+            severity: 'MEDIUM',
+            reason: 'Suspicious search query blocked',
+            searchQuery: 'how to bypass parental controls',
+            domain: 'www.google.com',
+            timestamp: { toDate: () => new Date(Date.now() - 30 * 60000) }
+        },
+        {
+            eventType: 'VPN_STARTED',
+            severity: 'LOW',
+            reason: 'VPN protection enabled',
+            timestamp: { toDate: () => new Date(Date.now() - 60 * 60000) }
+        }
+    ];
+
+    // Populate the events list
+    const eventsListEl = document.getElementById('eventsList');
+    eventsListEl.innerHTML = '';
+
+    mockEvents.forEach(event => {
+        const eventElement = createEventElement(event);
+        eventsListEl.appendChild(eventElement);
+    });
+
+    // NEW: Inject mock alerts
+    const mockAlerts = [
+        {
+            alertType: 'CRISIS_ALERT',
+            severity: 'CRITICAL',
+            message: '🚨 Crisis Alert: Child searched for "sexual harassment". Immediate parent attention required.',
+            crisisType: 'SEXUAL_HARASSMENT',
+            recommendations: [
+                { priority: 'URGENT', title: 'Ensure Their Safety First', message: 'If your child is in immediate danger, contact emergency services.' },
+                { priority: 'URGENT', title: 'Believe and Support Them', message: 'If your child discloses harassment, believe them. Say: "This is not your fault."' },
+                { priority: 'ACTION', title: 'Report to Authorities', message: 'Report to CHILDLINE India (1098) or local police.' }
+            ],
+            timestamp: { toDate: () => new Date(Date.now() - 2 * 60000) }
+        },
+        {
+            alertType: 'CONTENT_ALERT',
+            severity: 'HIGH',
+            message: 'Multiple explicit images blocked (4 images)',
+            timestamp: { toDate: () => new Date(Date.now() - 30 * 60000) }
+        }
+    ];
+
+    const alertsListEl = document.getElementById('alertsList');
+    alertsListEl.innerHTML = '';
+
+    mockAlerts.forEach(alert => {
+        const alertElement = createAlertElement(alert);
+        alertsListEl.appendChild(alertElement);
+    });
+
+    alert("Mock data injected! Check Live Activity Feed and Alerts.");
 };

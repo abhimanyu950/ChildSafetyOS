@@ -216,6 +216,14 @@ object VideoFrameAnalyzer {
      * Process a captured video frame
      * Called from JavaScript bridge
      */
+    // Lazy Antigravity Kernel
+    @Volatile
+    private var antigravityKernel: com.childsafety.os.policy.AntigravityRiskEngine? = null
+
+    /**
+     * Process a captured video frame
+     * Called from JavaScript bridge
+     */
     fun processFrame(
         context: Context,
         videoId: String,
@@ -224,7 +232,16 @@ object VideoFrameAnalyzer {
     ) {
         scope.launch {
             try {
-                // Skip if already analyzed this video
+                // Initialize Kernel if needed
+                if (antigravityKernel == null) {
+                    synchronized(this) {
+                        if (antigravityKernel == null) {
+                            antigravityKernel = com.childsafety.os.policy.AntigravityRiskEngine(context.applicationContext)
+                        }
+                    }
+                }
+
+                // Skip if already analyzed this video (per-video block state)
                 if (analyzedVideos.contains(videoId)) return@launch
                 
                 // Decode base64 image
@@ -235,75 +252,65 @@ object VideoFrameAnalyzer {
                 
                 framesAnalyzed++
                 
-                // Run ML classification
-                val result = ImageRiskClassifier.analyze(context, bitmap)
+                // 1. Gather Signals
+                val domain = try { java.net.URL(sourceUrl).host } catch (e: Exception) { "" }
+                val trust = com.childsafety.os.policy.DomainPolicy.getTrustLevel(domain)
+                val netScore = com.childsafety.os.policy.DomainPolicy.getDomainRiskScore(domain)
                 
-                // Get age-appropriate thresholds
-                val thresholds = ThresholdProvider.getThresholds(currentAgeGroup)
+                val signals = com.childsafety.os.policy.RiskSignals(
+                    networkScore = netScore.toFloat(),
+                    jsScore = 0f, // Video context only
+                    trust = trust
+                )
                 
-                // Check if should block
-                val shouldBlock = result.porn >= thresholds.pornThreshold ||
-                        result.hentai >= thresholds.hentaiThreshold ||
-                        (result.sexy >= thresholds.sexyThreshold && thresholds.sexyThreshold < 0.9f)
+                // 2. Compute Antigravity Risk (Video Mode = True)
+                // This applies EMA smoothing and Trust dampening
+                val riskScore = antigravityKernel!!.computeRisk(bitmap, signals, true, currentAgeGroup)
+                
+                // 3. Determine Action
+                val shouldBlock = when (currentAgeGroup) {
+                    AgeGroup.CHILD -> riskScore >= 30f
+                    AgeGroup.TEEN -> riskScore >= 50f
+                    AgeGroup.ADULT -> riskScore >= 80f
+                }
                 
                 if (shouldBlock) {
                     framesBlocked++
                     analyzedVideos.add(videoId)
                     
-                    // Construct detailed reason
-                    val blockReason = if (result.porn >= thresholds.pornThreshold) "Video Blocked: Porn (ML)"
-                                      else if (result.hentai >= thresholds.hentaiThreshold) "Video Blocked: Hentai (ML)"
-                                      else "Video Blocked: Explicit Content (ML)"
+                    val blockReason = "Video Blocked: Risk Score ${riskScore.toInt()}"
 
-                    Log.w(TAG, "BLOCKED video frame: $videoId (Reason: $blockReason)")
-                    
-                    // Extract domain from source URL
-                    val domain = try {
-                        java.net.URL(sourceUrl).host
-                    } catch (e: Exception) {
-                        null
-                    }
+                    Log.w(TAG, "BLOCKED video frame: $videoId (Score: $riskScore)")
                     
                     // Log to Firebase
                     FirebaseManager.logVideoBlock(
                         videoUrl = sourceUrl,
                         mlScores = mapOf(
-                            "porn" to result.porn.toDouble(),
-                            "sexy" to result.sexy.toDouble(),
-                            "hentai" to result.hentai.toDouble()
+                            "antigravity_score" to riskScore.toDouble()
                         ),
                         threshold = mapOf(
-                            "porn" to thresholds.pornThreshold.toDouble(),
-                            "sexy" to thresholds.sexyThreshold.toDouble()
+                            "mode" to currentAgeGroup.ordinal.toDouble(),
+                            "risk_score" to riskScore.toDouble()
                         ),
                         reason = blockReason,
                         url = sourceUrl,
                         domain = domain
                     )
                     
-                    // Navigate WebView to blocked page (instead of injecting JS which is blocked by CSP)
+                    // Navigate WebView to blocked page
                     withContext(Dispatchers.Main) {
-                        Log.w(TAG, "Attempting to show blocked page. WebView null? ${currentWebView == null}")
                         currentWebView?.let { webView ->
                             val blockedHtml = BlockedPageHtml.blockedVideoPage(
                                 reason = blockReason,
                                 domain = domain ?: ""
                             )
-                            Log.w(TAG, "Loading blocked video page for: $videoId")
                             webView.loadDataWithBaseURL(
-                                null,
-                                blockedHtml,
-                                "text/html",
-                                "UTF-8",
-                                null
+                                null, blockedHtml, "text/html", "UTF-8", null
                             )
-                            Log.w(TAG, "Blocked video page loaded successfully")
-                        } ?: run {
-                            Log.e(TAG, "Cannot show blocked page - WebView is null!")
                         }
                     }
                 } else {
-                    Log.d(TAG, "Video frame OK: $videoId (porn=${result.porn})")
+                    Log.d(TAG, "Video frame OK: $riskScore")
                 }
                 
                 bitmap.recycle()
@@ -321,6 +328,8 @@ object VideoFrameAnalyzer {
         analyzedVideos.clear()
         framesAnalyzed = 0
         framesBlocked = 0
+        // Reset kernel state (EMA/Cache) for new page
+        antigravityKernel = null
     }
 
     /**

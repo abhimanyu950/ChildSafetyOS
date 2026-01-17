@@ -1,7 +1,7 @@
 package com.childsafety.os.policy
 
 import android.util.Log
-import com.childsafety.os.cloud.EventUploader
+import com.childsafety.os.cloud.FirebaseManager
 import com.childsafety.os.ChildSafetyApp
 import org.json.JSONObject
 
@@ -35,7 +35,7 @@ object RiskLogger {
         
         // Log to Cloud/Analytics
         if (result.finalScore >= 30 || result.action != RiskAction.ALLOW) {
-             EventUploader.logRiskEvent(json.toString())
+             FirebaseManager.logRiskEvent(json.toString())
         }
     }
 }

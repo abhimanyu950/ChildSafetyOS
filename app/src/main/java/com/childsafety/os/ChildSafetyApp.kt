@@ -3,7 +3,7 @@ package com.childsafety.os
 import android.app.Application
 import android.os.Build
 import android.util.Log
-import com.childsafety.os.cloud.EventUploader
+
 import com.childsafety.os.cloud.FirebaseManager
 import com.childsafety.os.util.DeviceUtils
 import com.google.firebase.FirebaseApp
@@ -66,7 +66,7 @@ class ChildSafetyApp : Application() {
             // Log app start event
             val api: Int = Build.VERSION.SDK_INT
             val device: String = appDeviceId
-            EventUploader.logAppStart(api.toString(), device)
+            FirebaseManager.logAppStart(api.toString(), device)
 
             Log.i(TAG, "App started | Firebase OK | Device: $device")
         } catch (e: Exception) {
