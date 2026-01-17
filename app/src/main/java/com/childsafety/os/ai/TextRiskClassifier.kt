@@ -111,9 +111,9 @@ object TextRiskClassifier {
 
         // Thresholds based on Age Group
         val isRisky = when (ageGroup) {
-            AgeGroup.CHILD -> maxConfidence >= 0.6f
-            AgeGroup.TEEN -> maxConfidence >= 0.75f
-            AgeGroup.ADULT -> maxConfidence >= 0.95f
+            AgeGroup.CHILD -> maxConfidence >= 0.55f // Stricter for kids (was 0.6)
+            AgeGroup.TEEN -> maxConfidence >= 0.75f  // Balanced
+            AgeGroup.ADULT -> maxConfidence >= 0.98f // Very loose (was 0.95) - essentially blocking only obvious threats
         }
 
         return ClassificationResult(

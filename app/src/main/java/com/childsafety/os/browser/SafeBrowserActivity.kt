@@ -92,7 +92,14 @@ class SafeBrowserActivity : AppCompatActivity() {
                 // AGGRESSIVE PAGE BLOCKING: If multiple explicit images detected, block entire page
                 // Common scenario: Google Images search for explicit content
                 // Threshold: 2+ blocked images = block page immediately
-                if (count >= 2) {
+                // Dynamic threshold based on Age Group
+                val limit = when (currentAgeGroup) {
+                    AgeGroup.CHILD -> 1 // Zero tolerance
+                    AgeGroup.TEEN -> 3  // Accidental click buffer
+                    AgeGroup.ADULT -> 10 // Monitoring mostly
+                }
+
+                if (count >= limit) {
                     runOnUiThread {
                         Log.w(TAG, "⚠️ EXPLICIT CONTENT PAGE DETECTED: $count blocked images. Blocking page.")
                         val currentUrl = webView.url ?: ""
@@ -137,7 +144,8 @@ class SafeBrowserActivity : AppCompatActivity() {
                 displayZoomControls = false
                 setSupportZoom(true)
                 mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                cacheMode = WebSettings.LOAD_DEFAULT
+                // SECURITY: Disable cache to prevent back-button bypass of blocked pages
+                cacheMode = WebSettings.LOAD_NO_CACHE
             }
 
             // Add JavaScript bridge for image interception
@@ -231,8 +239,8 @@ class SafeBrowserActivity : AppCompatActivity() {
                 val host = request.url.host ?: return false
                 val urlLower = url.lowercase()
 
-                // 1. Check domain policy
-                val domainDecision = DomainPolicy.evaluate(host)
+                // 1. Check domain policy (Age Aware)
+                val domainDecision = DomainPolicy.evaluate(host, currentAgeGroup)
                 if (domainDecision.blocked) {
                     blockNavigation(view, url, host, domainDecision.category)
                     return true
@@ -473,7 +481,7 @@ class SafeBrowserActivity : AppCompatActivity() {
                     img.dataset.safetyStatus = 'pending';
                     
                     // *** PREEMPTIVE BLUR - Applied immediately for safety ***
-                    img.style.filter = 'blur(20px)';
+                    img.style.setProperty('filter', 'blur(20px)', 'important');
                     img.style.transition = 'filter 0.3s ease-in-out';
                     img.style.opacity = '0.7';
                     

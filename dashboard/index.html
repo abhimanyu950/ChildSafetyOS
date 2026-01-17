@@ -5,145 +5,202 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Child Safety Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
-    <div class="dashboard-container">
-        <!-- Header -->
-        <header class="dashboard-header">
-            <div class="header-content">
-                <h1>🛡️ Child Safety Dashboard</h1>
-                <div class="header-controls">
-                    <div class="device-selector">
-                        <label for="deviceId">Device:</label>
-                        <input type="text" id="deviceId" placeholder="Enter Device ID">
-                        <button id="connectBtn" class="btn-primary">Connect</button>
+    <div class="dashboard-wrapper">
+        <!-- Sidebar / Navigation (Could be expanded later, keeping simple for now) -->
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="top-bar">
+                <div class="brand">
+                    <div class="brand-icon">🛡️</div>
+                    <h1>Child Safety Dashboard</h1>
+                </div>
+
+                <div class="controls-area">
+                    <div class="device-input-group">
+                        <label for="deviceId">Device ID</label>
+                        <div class="input-wrapper">
+                            <input type="text" id="deviceId" placeholder="Enter ID...">
+                            <button id="connectBtn" class="btn-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M5 12h14M12 5l7 7-7 7" />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
-                    <div class="connection-status" id="connectionStatus">
-                        <span class="status-dot offline"></span>
+                    <div class="status-pill" id="connectionStatus">
+                        <div class="status-dot offline"></div>
                         <span class="status-text">Disconnected</span>
                     </div>
                 </div>
+            </header>
+
+            <!-- Dashboard Grid -->
+            <div class="dashboard-grid">
+
+                <!-- Left Column: Primary Stats & Info -->
+                <div class="grid-column main-stats">
+
+                    <!-- Device Status Card -->
+                    <div class="glass-card device-card">
+                        <div class="card-header">
+                            <h2>Device Status</h2>
+                            <span class="last-seen" id="lastSeen">Last seen: -</span>
+                        </div>
+                        <div class="device-info-grid">
+                            <div class="info-block">
+                                <span class="label">Device</span>
+                                <span class="value" id="deviceName">-</span>
+                            </div>
+                            <div class="info-block">
+                                <span class="label">Child</span>
+                                <span class="value" id="childName">-</span>
+                            </div>
+                        </div>
+                        <div class="badges-row">
+                            <span class="status-badge" id="vpnBadge">VPN: OFF</span>
+                            <span class="status-badge" id="adminBadge">Admin: OFF</span>
+                            <span class="status-badge" id="lockBadge">Lock: OFF</span>
+                        </div>
+                    </div>
+
+                    <!-- Wellbeing Score -->
+                    <div class="glass-card wellbeing-card">
+                        <div class="card-header">
+                            <h2>Wellbeing Pulse</h2>
+                        </div>
+                        <div class="score-display">
+                            <div class="score-ring">
+                                <svg class="progress-ring" width="120" height="120">
+                                    <circle class="progress-ring__circle-bg" stroke="currentColor" stroke-width="8"
+                                        fill="transparent" r="52" cx="60" cy="60" />
+                                    <circle class="progress-ring__circle" stroke="currentColor" stroke-width="8"
+                                        fill="transparent" r="52" cx="60" cy="60" />
+                                </svg>
+                                <div class="score-text">
+                                    <span id="wellbeingScore">-</span>
+                                </div>
+                            </div>
+                            <p id="wellbeingContext" class="context-text">Connect a device to analyze</p>
+                        </div>
+
+                        <!-- Recommendations (Inside Wellbeing for better context) -->
+                        <div id="recommendationsList" class="recommendations-list">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Alerts (Compact) -->
+                    <div class="glass-card alerts-card">
+                        <div class="card-header">
+                            <h2>Recent Alerts</h2>
+                        </div>
+                        <div class="alerts-list" id="alertsList">
+                            <p class="empty-state">No active alerts</p>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Right Column: Analytics & Activity -->
+                <div class="grid-column analytics-area">
+
+                    <!-- Quick Stats Row -->
+                    <div class="stats-row" id="todayStats">
+                        <div class="stat-pill">
+                            <span class="stat-label">Total Blocks</span>
+                            <span class="stat-number" id="totalBlocks">0</span>
+                        </div>
+                        <div class="stat-pill critical">
+                            <span class="stat-label">Critical</span>
+                            <span class="stat-number" id="criticalBlocks">0</span>
+                        </div>
+                        <div class="stat-pill">
+                            <span class="stat-label">Images</span>
+                            <span class="stat-number" id="imageBlocks">0</span>
+                        </div>
+                        <div class="stat-pill">
+                            <span class="stat-label">Videos</span>
+                            <span class="stat-number" id="videoBlocks">0</span>
+                        </div>
+                        <div class="stat-pill">
+                            <span class="stat-label">URLs</span>
+                            <span class="stat-number" id="urlBlocks">0</span>
+                        </div>
+                    </div>
+
+                    <!-- Analytics Grid (2x2) -->
+                    <div class="charts-grid shadow-grid">
+                        <!-- App Usage -->
+                        <div class="glass-card chart-card">
+                            <h3>App Usage</h3>
+                            <div class="chart-wrapper" id="usageChart">
+                                <p class="empty-state">No data</p>
+                            </div>
+                        </div>
+
+                        <!-- Category Split -->
+                        <div class="glass-card chart-card">
+                            <h3>Category Breakdown</h3>
+                            <div class="chart-wrapper" id="categoryChart">
+                                <p class="empty-state">No data</p>
+                            </div>
+                        </div>
+
+                        <!-- Blocked Domains -->
+                        <div class="glass-card chart-card">
+                            <h3>Top Blocked Sites</h3>
+                            <div class="chart-wrapper" id="domainsChart">
+                                <p class="empty-state">No data</p>
+                            </div>
+                        </div>
+
+                        <!-- Block Reasons -->
+                        <div class="glass-card chart-card">
+                            <h3>Block Reasons</h3>
+                            <div class="chart-wrapper" id="reasonsChart">
+                                <p class="empty-state">No data</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Feed -->
+                    <div class="glass-card feed-card">
+                        <div class="card-header">
+                            <h2>Live Activity Feed</h2>
+                            <div class="filters">
+                                <select id="severityFilter">
+                                    <option value="all">Severity: All</option>
+                                    <option value="CRITICAL">Critical</option>
+                                    <option value="HIGH">High</option>
+                                    <option value="MEDIUM">Medium</option>
+                                    <option value="LOW">Low</option>
+                                </select>
+                                <select id="typeFilter">
+                                    <option value="all">Type: All</option>
+                                    <option value="VIDEO_BLOCKED">Video</option>
+                                    <option value="IMAGE_BLOCKED">Image</option>
+                                    <option value="URL_BLOCKED">URL</option>
+                                    <option value="SEARCH_BLOCKED">Search</option>
+                                    <option value="PAGE_BLOCKED">Page</option>
+                                    <option value="APP_LOCKED">App Lock</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="events-list-wrapper" id="eventsList">
+                            <p class="empty-state">Connect to a device to view live activity</p>
+                        </div>
+                    </div>
+
+                </div>
             </div>
-        </header>
-
-        <!-- Main Content -->
-        <main class="dashboard-main">
-            <!-- Device Overview Cards -->
-            <section class="overview-section">
-                <div class="card device-info">
-                    <h2>Device Status</h2>
-                    <div class="device-details" id="deviceDetails">
-                        <div class="detail-item">
-                            <span class="label">Device Name:</span>
-                            <span class="value" id="deviceName">-</span>
-                        </div>
-                        <div class="detail-item">
-                            <span class="label">Child Name:</span>
-                            <span class="value" id="childName">-</span>
-                        </div>
-                        <div class="detail-item">
-                            <span class="label">Last Seen:</span>
-                            <span class="value" id="lastSeen">-</span>
-                        </div>
-                        <div class="protection-badges">
-                            <span class="badge" id="vpnBadge">VPN: OFF</span>
-                            <span class="badge" id="adminBadge">Admin: OFF</span>
-                            <span class="badge" id="lockBadge">Lock: OFF</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card stats-summary">
-                    <h2>Today's Activity</h2>
-                    <div class="stats-grid" id="todayStats"
-                        style="display: grid !important; grid-template-columns: repeat(3, 1fr) !important; gap: 16px !important;">
-                        <div class="stat-item">
-                            <div class="stat-value" id="totalBlocks">0</div>
-                            <div class="stat-label">Total Blocks</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value critical" id="criticalBlocks">0</div>
-                            <div class="stat-label">Critical</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value" id="imageBlocks">0</div>
-                            <div class="stat-label">Images</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value" id="videoBlocks">0</div>
-                            <div class="stat-label">Videos</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value" id="urlBlocks">0</div>
-                            <div class="stat-label">URLs</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card alerts-card">
-                    <h2>⚠️ Alerts</h2>
-                    <div class="alerts-list" id="alertsList">
-                        <p class="no-data">No alerts</p>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Live Events Feed -->
-            <section class="events-section">
-                <div class="card events-card">
-                    <div class="card-header">
-                        <h2>📊 Live Activity Feed</h2>
-                        <div class="filter-controls">
-                            <select id="severityFilter">
-                                <option value="all">All Severity</option>
-                                <option value="CRITICAL">Critical</option>
-                                <option value="HIGH">High</option>
-                                <option value="MEDIUM">Medium</option>
-                                <option value="LOW">Low</option>
-                            </select>
-                            <select id="typeFilter">
-                                <option value="all">All Types</option>
-                                <option value="VIDEO_BLOCKED">Video Blocks</option>
-                                <option value="IMAGE_BLOCKED">Image Blocks</option>
-                                <option value="URL_BLOCKED">URL Blocks</option>
-                                <option value="SEARCH_BLOCKED">Search Blocks</option>
-                                <option value="PAGE_BLOCKED">Page Blocks</option>
-                                <option value="APP_LOCKED">App Locks</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="events-list" id="eventsList">
-                        <p class="no-data">Connect to a device to see events</p>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Analytics Dashboard -->
-            <section class="analytics-section">
-                <div class="card chart-card">
-                    <h2>📈 Top Blocked Domains</h2>
-                    <div class="chart-container" id="domainsChart">
-                        <p class="no-data">No data available</p>
-                    </div>
-                </div>
-
-                <div class="card chart-card">
-                    <h2>🎯 Block Reasons</h2>
-                    <div class="chart-container" id="reasonsChart">
-                        <p class="no-data">No data available</p>
-                    </div>
-                </div>
-
-                <!-- [NEW] App Usage Chart -->
-                <div class="card chart-card">
-                    <h2>📱 App Usage (Today)</h2>
-                    <div class="chart-container" id="usageChart">
-                        <p class="no-data">No usage data</p>
-                    </div>
-                </div>
-            </section>
         </main>
     </div>
 

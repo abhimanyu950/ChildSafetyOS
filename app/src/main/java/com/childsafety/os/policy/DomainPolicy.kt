@@ -161,24 +161,32 @@ object DomainPolicy {
      * Evaluates if a domain should be blocked
      * Checks: Cloud whitelist → Cloud blocklist → Local blocklist
      */
-    fun evaluate(host: String?): PolicyDecision {
+    /**
+     * Evaluates if a domain should be blocked based on Age Group.
+     * 
+     * Logic:
+     * - CHILD: Strict blocking (All categories)
+     * - TEEN: Allow Social Media, but block others
+     * - ADULT: Allow Social, Dating, Gambling (log only), Block malicious/illegal
+     */
+    fun evaluate(host: String?, ageGroup: AgeGroup): PolicyDecision {
         if (host.isNullOrBlank()) {
             return PolicyDecision.allow()
         }
 
         val h = host.lowercase()
         
-        // 1. Check cloud whitelist first (parent-allowed domains)
+        // 1. Check cloud whitelist first (parent-allowed domains override everything)
         if (com.childsafety.os.cloud.CloudPolicySync.isAllowedByCloud(h)) {
             return PolicyDecision.allow()
         }
         
-        // 2. Check cloud blocklist (dynamic parent additions)
+        // 2. Check cloud blocklist (dynamic parent additions override everything)
         if (com.childsafety.os.cloud.CloudPolicySync.isBlockedByCloud(h)) {
             return PolicyDecision.block(PolicyReason.DOMAIN, BlockCategory.CLOUD_BLOCKED)
         }
         
-        // 3. Check each local category for specific blocking reason
+        // 3. Check local categories
         val category = when {
             adultDomains.any { h == it || h.endsWith(".$it") } -> BlockCategory.ADULT
             gamblingDomains.any { h == it || h.endsWith(".$it") } -> BlockCategory.GAMBLING
@@ -191,10 +199,35 @@ object DomainPolicy {
             else -> null
         }
 
-        return if (category != null) {
-            PolicyDecision.block(PolicyReason.DOMAIN, category)
-        } else {
-            PolicyDecision.allow()
+        // If no category matched, it's safe
+        if (category == null) {
+            return PolicyDecision.allow()
+        }
+
+        // 4. Age-Specific Policy Application
+        return when (ageGroup) {
+            AgeGroup.CHILD -> {
+                // STRICT: Block everything in our lists
+                PolicyDecision.block(PolicyReason.DOMAIN, category)
+            }
+            AgeGroup.TEEN -> {
+                // MODERATE: Allow Social Media, block everything else
+                if (category == BlockCategory.SOCIAL_MEDIA) {
+                    PolicyDecision.allow()
+                } else {
+                    PolicyDecision.block(PolicyReason.DOMAIN, category)
+                }
+            }
+            AgeGroup.ADULT -> {
+                // LIBERAL/MONITOR: Block only illegal/dangerous, allow "vice"
+                when (category) {
+                    BlockCategory.ADULT -> PolicyDecision.block(PolicyReason.DOMAIN, category) // Still block hardcore porn by default (can be toggled in app settings theoretically)
+                    BlockCategory.DRUGS, BlockCategory.VIOLENCE, BlockCategory.PROXY -> PolicyDecision.block(PolicyReason.DOMAIN, category)
+                    // Allow these for adults:
+                    BlockCategory.SOCIAL_MEDIA, BlockCategory.DATING, BlockCategory.GAMBLING, BlockCategory.URL_SHORTENER -> PolicyDecision.allow()
+                    else -> PolicyDecision.allow()
+                }
+            }
         }
     }
 

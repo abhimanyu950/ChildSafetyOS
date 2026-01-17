@@ -27,6 +27,33 @@ const eventsList = document.getElementById('eventsList');
 const severityFilter = document.getElementById('severityFilter');
 const typeFilter = document.getElementById('typeFilter');
 
+// App Categories (Mirroring Android Logic)
+const APP_CATEGORIES = {
+    GAMES: [
+        "com.supercell.clashofclans", "com.supercell.clashroyale",
+        "com.mojang.minecraftpe", "com.kiloo.subwaysurf",
+        "com.imangi.templerun2", "com.pubg.krmobile",
+        "com.activision.callofduty.shooter", "com.dts.freefireth",
+        "com.mobile.legends", "com.riotgames.league.wildrift",
+        "com.roblox.client"
+    ],
+    SOCIAL: [
+        "com.instagram.android", "com.zhiliaoapp.musically", // TikTok
+        "com.snapchat.android", "com.twitter.android",
+        "com.facebook.katana", "com.whatsapp",
+        "com.discord"
+    ],
+    VIDEO: [
+        "com.google.android.youtube", "com.netflix.mediaclient",
+        "com.amazon.avod.thirdpartyclient", "in.startv.hotstar",
+        "com.jio.media.jiobeats"
+    ],
+    BROWSER: [
+        "com.android.chrome", "org.mozilla.firefox",
+        "com.microsoft.emmx", "com.opera.browser"
+    ]
+};
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     // Load saved device ID
@@ -289,6 +316,159 @@ function updateTodayStats(stats) {
     document.getElementById('imageBlocks').textContent = stats.imageBlocks || 0;
     document.getElementById('videoBlocks').textContent = stats.videoBlocks || 0;
     document.getElementById('urlBlocks').textContent = stats.urlBlocks || 0;
+
+    // New: Calculate and display Wellbeing Insights
+    updateWellbeingInsights(stats);
+}
+
+function updateWellbeingInsights(stats) {
+    // 1. Calculate Score
+    const scoreData = calculateWellbeingScore(stats);
+
+    // Update Score UI
+    const scoreElement = document.getElementById('wellbeingScore');
+    if (scoreElement) {
+        scoreElement.textContent = scoreData.score;
+
+        // Color coding
+        scoreElement.className = 'wellbeing-score-value'; // Reset
+        if (scoreData.score >= 80) scoreElement.classList.add('score-good');
+        else if (scoreData.score >= 50) scoreElement.classList.add('score-average');
+        else scoreElement.classList.add('score-bad');
+    }
+
+    // Update Score Label/Context
+    const scoreContext = document.getElementById('wellbeingContext');
+    if (scoreContext) {
+        scoreContext.textContent = scoreData.context;
+    }
+
+    // 2. Generate Recommendations
+    const recommendations = generateRecommendations(stats, scoreData);
+    const recList = document.getElementById('recommendationsList');
+
+    if (recList) {
+        recList.innerHTML = '';
+        if (recommendations.length === 0) {
+            recList.innerHTML = '<p class="no-data">Great job! Everything looks good.</p>';
+        } else {
+            recommendations.forEach(rec => {
+                const div = document.createElement('div');
+                div.className = `recommendation-item ${rec.type.toLowerCase()}`;
+                div.innerHTML = `
+                    <div class="rec-icon">${rec.icon}</div>
+                    <div class="rec-content">
+                        <strong>${rec.title}</strong>
+                        <p>${rec.message}</p>
+                    </div>
+                `;
+                recList.appendChild(div);
+            });
+        }
+    }
+}
+
+function calculateWellbeingScore(stats) {
+    let score = 100;
+    const deductions = [];
+
+    // Deduct for critical blocks
+    const criticals = stats.criticalBlocks || 0;
+    if (criticals > 0) {
+        const penalty = Math.min(criticals * 10, 40); // Max 40 pts deduction
+        score -= penalty;
+        deductions.push("Safety Incidents");
+    }
+
+    // Deduct for excessive screen time (if available)
+    // Heuristic: Sum app usage
+    let totalMinutes = 0;
+    if (stats.appUsage) {
+        totalMinutes = Object.values(stats.appUsage).reduce((a, b) => a + b, 0);
+    }
+
+    if (totalMinutes > 120) { // > 2 hours
+        const extraHours = Math.ceil((totalMinutes - 120) / 60);
+        const penalty = Math.min(extraHours * 5, 30); // 5 pts per extra hour, max 30
+        score -= penalty;
+        deductions.push("High Screen Time");
+    }
+
+    // Deduct for high category usage (e.g. Social > 1h)
+    // This requires iterating appUsage and mapping to categories...
+    // We'll trust the totalMinutes for now to keep it simple, 
+    // but could refine this if we want specific penalties for "Doomscrolling".
+
+    return {
+        score: Math.max(0, score),
+        context: deductions.length > 0
+            ? `Impacted by: ${deductions.join(", ")}`
+            : "Healthy digital habits detected."
+    };
+}
+
+function generateRecommendations(stats, scoreData) {
+    const recs = [];
+
+    // 1. Critical Blocks
+    if ((stats.criticalBlocks || 0) > 0) {
+        recs.push({
+            type: 'URGENT',
+            icon: '🛡️',
+            title: 'Review Blocked Content',
+            message: 'Critical content was blocked today. Check the "Live Activity Feed" to see specifically what was accessed and consider talking to your child.'
+        });
+    }
+
+    // 2. High Screen Time
+    let totalMinutes = 0;
+    const categoryUsage = { GAMES: 0, SOCIAL: 0, VIDEO: 0, OTHER: 0 };
+
+    if (stats.appUsage) {
+        Object.entries(stats.appUsage).forEach(([pkg, minutes]) => {
+            totalMinutes += minutes;
+            const cat = getAppCategory(pkg);
+            categoryUsage[cat] += minutes;
+        });
+    }
+
+    if (totalMinutes > 180) { // > 3h
+        recs.push({
+            type: 'WARNING',
+            icon: '⏱️',
+            title: 'Reduce Screen Time',
+            message: `Total screen time is high (${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m). Consider setting a daily limit/downtime.`
+        });
+    }
+
+    // 3. Category Specific
+    if (categoryUsage.SOCIAL > 60) {
+        recs.push({
+            type: 'INFO',
+            icon: '💬',
+            title: 'Social Media Limit',
+            message: 'Social media usage is over 1 hour. Verify if this aligns with your family rules.'
+        });
+    }
+
+    if (categoryUsage.GAMES > 60) {
+        recs.push({
+            type: 'INFO',
+            icon: '🎮',
+            title: 'Gaming Balance',
+            message: 'Gaming usage is high today. Encourage outdoor activities or reading.'
+        });
+    }
+
+    return recs;
+}
+
+function getAppCategory(packageName) {
+    if (APP_CATEGORIES.GAMES.some(p => packageName.includes(p))) return 'GAMES';
+    if (APP_CATEGORIES.SOCIAL.some(p => packageName.includes(p))) return 'SOCIAL';
+    if (APP_CATEGORIES.VIDEO.some(p => packageName.includes(p))) return 'VIDEO';
+    if (APP_CATEGORIES.BROWSER.some(p => packageName.includes(p)) || packageName.includes('browser') || packageName.includes('chrome')) return 'BROWSER';
+    return 'OTHER';
 }
 
 // Update Charts
@@ -322,9 +502,51 @@ function updateChartsData(stats) {
             .sort((a, b) => b[1] - a[1]) // Sort by duration desc
             .slice(0, 10); // Limit to top 10
         usageChart.innerHTML = renderUsageChart(sorted);
+
+        // Render Category Chart as well
+        renderCategoryChart(stats.appUsage);
     } else {
         usageChart.innerHTML = '<p class="no-data">No usage data yet</p>';
+        document.getElementById('categoryChart').innerHTML = '<p class="no-data">No usage data</p>';
     }
+}
+
+function renderCategoryChart(appUsage) {
+    const categoryUsage = { GAMES: 0, SOCIAL: 0, VIDEO: 0, BROWSER: 0, OTHER: 0 };
+    let total = 0;
+
+    Object.entries(appUsage).forEach(([pkg, minutes]) => {
+        const cat = getAppCategory(pkg);
+        categoryUsage[cat] = (categoryUsage[cat] || 0) + minutes;
+        total += minutes;
+    });
+
+    const categoryChart = document.getElementById('categoryChart');
+
+    // Sort logic
+    const sortedCats = Object.entries(categoryUsage)
+        .sort((a, b) => b[1] - a[1])
+        .filter(x => x[1] > 0); // Only show used categories
+
+    if (sortedCats.length === 0) {
+        categoryChart.innerHTML = '<p class="no-data">No usage data</p>';
+        return;
+    }
+
+    const html = sortedCats.map(([cat, minutes]) => {
+        const percentage = total > 0 ? (minutes / total) * 100 : 0;
+        const colorClass = `cat-${cat.toLowerCase()}`;
+        return `
+            <div class="chart-bar">
+                <div class="chart-label">${cat}</div>
+                <div class="chart-bar-fill ${colorClass}-bg" style="width: ${percentage}%">
+                    <span class="chart-value">${minutes}m</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    categoryChart.innerHTML = html;
 }
 
 function renderBarChart(data) {
@@ -459,3 +681,40 @@ function clearAllData() {
     document.getElementById('reasonsChart').innerHTML = '<p class="no-data">No data available</p>';
     document.getElementById('alertsList').innerHTML = '<p class="no-data">No alerts</p>';
 }
+
+// --- DEBUG / TESTING ONLY ---
+window.injectMockData = function () {
+    console.log("Injecting mock data for verification...");
+
+    const mockStats = {
+        totalBlocks: 15,
+        criticalBlocks: 3,
+        imageBlocks: 10,
+        videoBlocks: 2,
+        urlBlocks: 3,
+        topBlockedDomains: { "pornhub_com": 5, "xamster_com": 2, "random_adult_site_net": 1 },
+        topReasons: { "Nudity detected": 8, "Explicit content": 4, "Blocked Domain": 3 },
+        appUsage: {
+            "com.instagram.android": 95, // Social > 60
+            "com.roblox.client": 120,    // Games > 60
+            "com.google.android.youtube": 45, // Video
+            "com.android.chrome": 30, // Browser
+            "com.calculator": 5
+        }
+    };
+
+    updateTodayStats(mockStats);
+    updateChartsData(mockStats);
+
+    // Also simulate device info
+    updateDeviceInfo({
+        deviceName: "Mock Device (Pixel 7)",
+        childName: "Alex",
+        lastSeen: { toDate: () => new Date() },
+        vpnEnabled: true,
+        adminProtectionEnabled: true,
+        settingsLockEnabled: false
+    });
+
+    alert("Mock data injected!");
+};
