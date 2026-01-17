@@ -29,6 +29,8 @@ import com.childsafety.os.browser.SafeBrowserActivity
 import com.childsafety.os.policy.AgeGroup
 import com.childsafety.os.ui.theme.ChildSafetyOSTheme
 import com.childsafety.os.vpn.SafeVpnService
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 
 /**
  * Main launcher activity.
@@ -117,12 +119,30 @@ class MainActivity : ComponentActivity() {
                     derivedStateOf { isAccessibilityServiceEnabled(this, com.childsafety.os.service.AppLockService::class.java) } 
                 }
 
-                Box(modifier = Modifier.fillMaxSize()) {
+                // Track Usage Access status
+                var isUsageActive by remember { mutableStateOf(com.childsafety.os.manager.UsageManager.hasPermission(this)) }
+
+                // [NEW] Check if App Tour is needed
+                val sharedPrefs = remember { getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
+                var showTour by remember { mutableStateOf(!sharedPrefs.getBoolean("tour_completed", false)) }
+
+                if (showTour) {
+                    AppTourScreen(onFinish = {
+                        sharedPrefs.edit().putBoolean("tour_completed", true).apply()
+                        showTour = false
+                    })
+                } else {
+                    Box(modifier = Modifier.fillMaxSize()) {
                     ModernMainScreen(
                         vpnEnabled = vpnEnabled,
                         isAdminActive = isAdminActive,
                         isAccessibilityActive = isAccessibilityActive,
                         selectedAgeGroup = selectedAgeGroup,
+                        isUsageActive = isUsageActive,
+                        onRequestUsageAccess = {
+                             com.childsafety.os.manager.UsageManager.requestPermission(this@MainActivity)
+                             Toast.makeText(this@MainActivity, "Find 'ChildSafetyOS' and allow usage tracking", Toast.LENGTH_LONG).show()
+                        },
                         onVpnToggle = { 
                             if (vpnEnabled) {
                                 // Require PIN to disable VPN
@@ -234,6 +254,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+            } // End of else block
                 
                 // Refresh admin status on resume (lifecycle effect)
                 DisposableEffect(Unit) {
@@ -241,8 +262,10 @@ class MainActivity : ComponentActivity() {
                         if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                             val adminStatus = devicePolicyManager.isAdminActive(adminComponentName)
                             val accessStatus = isAccessibilityServiceEnabled(this@MainActivity, com.childsafety.os.service.AppLockService::class.java)
+                            val usageStatus = com.childsafety.os.manager.UsageManager.hasPermission(this@MainActivity)
                             
                             isAdminActive = adminStatus
+                            isUsageActive = usageStatus
                             // Force Recomposition for Accessibility is handled by derivedStateOf but we need to verify sync
                             
                             // SYNC TO FIREBASE
@@ -328,461 +351,4 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-fun MainScreen(
-    vpnEnabled: Boolean,
-    isAdminActive: Boolean,
-    isAccessibilityActive: Boolean,
-    selectedAgeGroup: AgeGroup,
-    onVpnToggle: () -> Unit,
-    onAdminToggle: () -> Unit,
-    onAccessToggle: () -> Unit,
-    onOpenBrowser: () -> Unit,
-    onAgeGroupChange: (AgeGroup) -> Unit,
-    onRequestDataDeletion: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF667EEA),
-                        Color(0xFF764BA2)
-                    )
-                )
-            )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState()) // Enable scrolling
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            // Vertical arrangement defaults to Top, which is better for scrolling
-        ) {
-            // Header
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(top = 48.dp)
-            ) {
-                Text(
-                    text = "🛡️",
-                    fontSize = 64.sp
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "ChildSafetyOS",
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = if (isAdminActive && isAccessibilityActive) "Maximum Security" else "Setup Incomplete",
-                    fontSize = 16.sp,
-                    color = Color.White.copy(alpha = 0.8f)
-                )
-            }
-
-            // Protection Status Card
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 12.dp),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White
-                )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    // VPN Status
-                    // ... (Keeping mostly same, simplified for brevity in this view)
-                    
-                    Button(
-                        onClick = onVpnToggle,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (vpnEnabled) Color(0xFFE53E3E) else Color(0xFF38A169)
-                        )
-                    ) {
-                        Text(if (vpnEnabled) "1. Pause Filtering" else "1. Start Filtering")
-                    }
-                    
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    // Admin Toggle
-                    OutlinedButton(
-                        onClick = onAdminToggle,
-                        modifier = Modifier.fillMaxWidth().height(50.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (isAdminActive) Color(0xFF38A169) else Color(0xFFE53E3E)
-                        )
-                    ) {
-                        Text(if (isAdminActive) "2. Uninstall Protection: ON" else "2. Enable Uninstall Protection")
-                    }
-                    
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // App Lock / Settings Lock
-                    // Play Store Compliance: Must show disclosure BEFORE redirection
-                    var showAccessDisclosure by remember { mutableStateOf(false) }
-
-                    OutlinedButton(
-                        onClick = { 
-                            if (!isAccessibilityActive) {
-                                showAccessDisclosure = true 
-                            } else {
-                                onAccessToggle() 
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(50.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (isAccessibilityActive) Color(0xFF38A169) else Color(0xFFE53E3E)
-                        )
-                    ) {
-                        Text(if (isAccessibilityActive) "3. Settings Lock: ON" else "3. Enable Settings Lock")
-                    }
-                    
-                    if (showAccessDisclosure) {
-                        AlertDialog(
-                            onDismissRequest = { showAccessDisclosure = false },
-                            title = { Text("Permission Required") },
-                            text = {
-                                Text(
-                                    "ChildSafetyOS needs the Accessibility Service permission to function.\n\n" +
-                                    "Why do we need it?\n" +
-                                    "1. To detect when restricted apps are opened and lock them.\n" +
-                                    "2. To prevent the app from being force-stopped or uninstalled without a PIN.\n\n" +
-                                    "Privacy:\n" +
-                                    "This service runs LOCALLY. Your screen content is NOT sent to any server.\n\n" +
-                                    "Please find 'Child Safety OS' in the list and enable it."
-                                )
-                            },
-                            confirmButton = {
-                                Button(onClick = { 
-                                    showAccessDisclosure = false
-                                    onAccessToggle() 
-                                }) {
-                                    Text("I Understand")
-                                }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { showAccessDisclosure = false }) {
-                                    Text("Cancel")
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-
-            // Safe Browser Button
-            Button(
-                onClick = onOpenBrowser,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(20.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.White,
-                    contentColor = Color(0xFF764BA2)
-                )
-            ) {
-                Text("🌐 Open Safe Browser", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            }
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            // --- PHASE 2: ENGAGEMENT ---
-            
-            // 1. Gamification / Rewards Card
-            val streak = com.childsafety.os.gamification.GamificationManager.getStreak()
-            val points = com.childsafety.os.gamification.GamificationManager.getPoints()
-            
-            Card(
-                modifier = Modifier.fillMaxWidth().clickable { /* Show detailed dashboard later */ },
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF6AD55)) // Orange for fun
-            ) {
-                Row(
-                   modifier = Modifier.padding(16.dp),
-                   verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("🥷", fontSize = 24.sp)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text("Cyber Ninja Status", fontWeight = FontWeight.Bold, color = Color.White)
-                        Text("$streak Day Streak • $points Points", fontSize = 12.sp, color = Color.White)
-                    }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            // 2. Focus Mode Toggle
-            var isFocusMode by remember { mutableStateOf(false) }
-            
-            Button(
-                onClick = { 
-                    isFocusMode = !isFocusMode
-                    com.childsafety.os.policy.BlockedAppsConfig.isFocusModeEnabled = isFocusMode
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isFocusMode) Color(0xFF805AD5) else Color.White.copy(alpha = 0.2f)
-                ),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(
-                    text = if (isFocusMode) "🧠 Focus Mode: ON" else "🧠 Start Focus Mode",
-                    color = Color.White
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            // Age Mode Selector Card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White.copy(alpha = 0.15f)
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "🎯 Protection Mode",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    // Age mode buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        AgeGroup.values().forEach { ageGroup ->
-                            val isSelected = selectedAgeGroup == ageGroup
-                            val emoji = when (ageGroup) {
-                                AgeGroup.CHILD -> "👶"
-                                AgeGroup.TEEN -> "🧑"
-                                AgeGroup.ADULT -> "👤"
-                            }
-                            Button(
-                                onClick = { onAgeGroupChange(ageGroup) },
-                                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isSelected) Color.White else Color.White.copy(alpha = 0.3f),
-                                    contentColor = if (isSelected) Color(0xFF764BA2) else Color.White
-                                ),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("$emoji ${ageGroup.name}", fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
-                            }
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    // Description based on selected mode
-                    val description = com.childsafety.os.policy.ThresholdProvider.getDescription(selectedAgeGroup)
-                    Text(
-                        text = description,
-                        fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.8f),
-                        textAlign = TextAlign.Center
-                    )
-                    
-                    // Important note for Adult mode
-                    if (selectedAgeGroup == AgeGroup.ADULT) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "⚠️ Even in Adult mode, highly explicit content is blocked for your wellbeing.",
-                            fontSize = 10.sp,
-                            color = Color(0xFFFFD700),
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            // Privacy Policy Dialog
-            var showPrivacyDialog by remember { mutableStateOf(false) }
-            
-            TextButton(
-                onClick = { showPrivacyDialog = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("🔒 Privacy Policy", color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp)
-            }
-            
-            if (showPrivacyDialog) {
-                AlertDialog(
-                    onDismissRequest = { showPrivacyDialog = false },
-                    title = { Text("Privacy Policy") },
-                    text = {
-                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                            Text(
-                                text = """
-                                    Last Updated: January 2026
-                                    
-                                    1. Data Cleanliness
-                                    ChildSafetyOS prioritizes your privacy. We process text and images LOCALLY on your device whenever possible.
-                                    
-                                    2. Data Collection
-                                    We collect:
-                                    - Domain names (to block harmful sites)
-                                    - App usage stats (to lock apps)
-                                    - Device identifiers (for dashboard sync)
-                                    
-                                    3. Data Sharing
-                                    We do NOT sell your data. Data is only synced to your personal Parental Dashboard via secure Firebase connection.
-                                    
-                                    4. Permissions
-                                    We use high-privilege permissions (VPN, Accessibility, Admin) solely to enforce parental controls and prevent unauthorized removal.
-                                    
-                                    5. Contact
-                                    For data deletion or inquiries, use the 'Request Data Deletion' button.
-                                """.trimIndent(),
-                                fontSize = 13.sp
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        Button(onClick = { showPrivacyDialog = false }) {
-                            Text("Close")
-                        }
-                    }
-                )
-            }
-            
-            // Request Data Deletion via Email (DPDP Compliance)
-            TextButton(
-                onClick = onRequestDataDeletion,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("📧 Request Data Deletion (DPDP)", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
-            }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // (Advanced Management / Uninstall button removed by request)
-        }
-    }
-}
-
-@Composable
-fun LockScreen(
-    onUnlock: () -> Unit
-) {
-    // A Red full-screen overlay for locking Settings
-    var pin by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFE53E3E)),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(32.dp).background(Color.White, RoundedCornerShape(16.dp)).padding(24.dp)
-        ) {
-            Text("🔒 Restricted Access", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(8.dp))
-            Text("Settings are locked.", color = Color.Gray)
-            Text("Enter Parent PIN to proceed.", color = Color.Gray)
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            OutlinedTextField(
-                value = pin,
-                onValueChange = { if (it.length <= 4) pin = it },
-                label = { Text("PIN") },
-                isError = error != null,
-                singleLine = true
-            )
-            if (error != null) Text(error!!, color = Color.Red, fontSize = 12.sp)
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Button(
-                onClick = { 
-                    if (pin == "1234") {
-                        // ENABLE BYPASS MODE - allows parent to access Settings for 30 seconds
-                        com.childsafety.os.service.AppLockService.enableBypassMode()
-                        onUnlock()
-                    } else {
-                        error = "Incorrect PIN"
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Unlock (30 sec access)")
-            }
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "After unlocking, you have 30 seconds to change settings.",
-                fontSize = 11.sp,
-                color = Color.Gray,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            )
-        }
-    }
-}
-
-@Composable
-fun PinDialog(
-    onDismiss: () -> Unit,
-    onPinEntered: (String) -> Unit,
-    error: String? = null
-) {
-    var pin by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Parent PIN Required") },
-        text = {
-            Column {
-                Text("Enter PIN to disable protection (Default: 1234)")
-                Spacer(modifier = Modifier.height(16.dp))
-                OutlinedTextField(
-                    value = pin,
-                    onValueChange = { if (it.length <= 4) pin = it },
-                    singleLine = true,
-                    isError = error != null,
-                    label = { Text("PIN") },
-                    supportingText = { if (error != null) Text(error, color = MaterialTheme.colorScheme.error) }
-                )
-            }
-        },
-        confirmButton = {
-            Button(onClick = { onPinEntered(pin) }) {
-                Text("Verify")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
+// MainScreen removed as it is replaced by ModernMainScreen
